@@ -1,0 +1,82 @@
+[
+  {
+    "id": "RAT3-001",
+    "name": "AndroRAT Marker",
+    "family": "AndroRAT",
+    "pattern": "AndroRAT",
+    "isRegex": false,
+    "riskWeight": 50
+  },
+  {
+    "id": "RAT3-002",
+    "name": "SpyNote Keylogger",
+    "family": "SpyNote",
+    "pattern": "com.spynote",
+    "isRegex": false,
+    "riskWeight": 55
+  },
+  {
+    "id": "RAT3-003",
+    "name": "Cryptocurrency Miner C2",
+    "family": "CryptoMiner",
+    "pattern": "stratum\\+tcp://",
+    "isRegex": true,
+    "riskWeight": 40
+  },
+  {
+    "id": "RAT3-004",
+    "name": "Raw Shell Execution",
+    "family": "RootExploit",
+    "pattern": "/system/xbin/su",
+    "isRegex": false,
+    "riskWeight": 55
+  },
+  {
+    "id": "RAT3-005",
+    "name": "Banking Trojan Overlay",
+    "family": "BankBot",
+    "pattern": "getSimCountryIso",
+    "isRegex": false,
+    "riskWeight": 25
+  },
+  {
+    "id": "RAT3-006",
+    "name": "SMS Stealer Pattern",
+    "family": "SMSStealer",
+    "pattern": "readSmsLog",
+    "isRegex": false,
+    "riskWeight": 35
+  },
+  {
+    "id": "RAT3-007",
+    "name": "Ransomware File Pattern",
+    "family": "MobileRansomware",
+    "pattern": "\\.locked$",
+    "isRegex": true,
+    "riskWeight": 60
+  },
+  {
+    "id": "RAT3-008",
+    "name": "Dynamic DNS C2",
+    "family": "RAT",
+    "pattern": "dyndns\\.org",
+    "isRegex": true,
+    "riskWeight": 20
+  },
+  {
+    "id": "RAT3-009",
+    "name": "Tor Network Usage",
+    "family": "Covert",
+    "pattern": "\\.onion",
+    "isRegex": false,
+    "riskWeight": 40
+  },
+  {
+    "id": "RAT3-010",
+    "name": "Fake Google Play SDK",
+    "family": "Adware",
+    "pattern": "com.google.play.fakesdk",
+    "isRegex": false,
+    "riskWeight": 45
+  }
+]

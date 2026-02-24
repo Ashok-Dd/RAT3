@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path name="rat3_apk_cache" path="." />
+    <external-cache-path name="rat3_apk_external_cache" path="." />
+    <files-path name="rat3_apk_files" path="." />
+</paths>
