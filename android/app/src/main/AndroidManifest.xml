@@ -3,15 +3,30 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- Needed to hand a scanned APK to the system installer. -->
+    <!-- ── Pre-installation APK scanner ─────────────────────────────────── -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
-    <!--
-        APKs opened through the file picker (ACTION_GET_CONTENT) or "Open with" arrive as a
-        content:// URI with a temporary read grant, so no storage permission is required.
-    -->
+    <!-- ── Post-installation device monitor ─────────────────────────────── -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Device-wide monitoring needs to enumerate other apps. Not Play-Store friendly;
+         this build targets sideload / enterprise use. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
 
-    <!-- Lets the ACTION_VIEW install intent resolve on Android 11+ (package visibility). -->
+    <!-- Lets the ACTION_VIEW install intent resolve on Android 11+. -->
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -61,6 +76,34 @@
             </intent-filter>
 
         </activity>
+
+        <!-- Persistent background monitor -->
+        <service
+            android:name=".ScanForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".ScanAlarmReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.rat3.RUN_SCAN" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
 
         <!-- Shares the copied APK from cache/apk_scan/ with the system installer only. -->
         <provider

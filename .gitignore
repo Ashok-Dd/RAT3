@@ -43,3 +43,8 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Stray plugin/module build dirs (build output is redirected to /build)
+android/app/build/
+android/*/build/
+android/build/
