@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:rat3/models/scan_result.dart';
+import 'package:rat3/features/apk_scan/models/scan_result.dart';
 
 void main() {
   group('ScanResult.fromJson', () {

@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Analysis Result – APK Malware Detector</title>
+  <style>
+    /* ── CSS Variables ─────────────────────────────────── */
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --border:  #30363d;
+      --accent:  #58a6ff;
+      --danger:  #f85149;
+      --safe:    #3fb950;
+      --warn:    #d29922;
+      --text:    #e6edf3;
+      --muted:   #8b949e;
+    }
+
+    /* ── Reset ─────────────────────────────────────────── */
+    *  { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color:      var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      min-height: 100vh;
+    }
+
+    /* ── Nav ───────────────────────────────────────────── */
+    nav {
+      background:    var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding:       14px 32px;
+      display:       flex;
+      align-items:   center;
+      gap:           24px;
+    }
+    nav .logo {
+      font-size:   1.1rem;
+      font-weight: 700;
+      color:       var(--accent);
+      display:     flex;
+      align-items: center;
+      gap:         8px;
+    }
+    nav a            { color: var(--muted); text-decoration: none; font-size: .9rem; }
+    nav a:hover      { color: var(--text); }
+    nav .new-btn {
+      margin-left:  auto;
+      background:   var(--accent);
+      color:        #000;
+      padding:      7px 16px;
+      border-radius: 6px;
+      font-weight:  600;
+      font-size:    .85rem;
+      text-decoration: none;
+    }
+
+    /* ── Layout ────────────────────────────────────────── */
+    .container { max-width: 1000px; margin: 0 auto; padding: 32px 24px; }
+
+    /* ── Verdict Banner ────────────────────────────────── */
+    .verdict-banner {
+      border-radius: 14px;
+      padding:       32px 36px;
+      display:       flex;
+      align-items:   center;
+      gap:           28px;
+      margin-bottom: 28px;
+      position:      relative;
+      overflow:      hidden;
+    }
+    .verdict-banner.malware {
+      background: linear-gradient(135deg, rgba(248, 81, 73, .15), rgba(248, 81, 73, .05));
+      border:     1px solid rgba(248, 81, 73, .4);
+    }
+    .verdict-banner.goodware {
+      background: linear-gradient(135deg, rgba(63, 185, 80, .15), rgba(63, 185, 80, .05));
+      border:     1px solid rgba(63, 185, 80, .4);
+    }
+    .verdict-icon    { font-size: 4rem; }
+    .verdict-text h2 { font-size: 1.9rem; font-weight: 800; }
+
+    .verdict-text .risk-pill {
+      display:       inline-block;
+      padding:       4px 14px;
+      border-radius: 20px;
+      font-size:     .85rem;
+      font-weight:   600;
+      margin-top:    6px;
+    }
+    .risk-Critical { background: rgba(248, 81, 73, .25); color: #f85149; }
+    .risk-High     { background: rgba(255, 110, 87, .2);  color: #ff6e57; }
+    .risk-Medium   { background: rgba(210, 153, 34, .2);  color: #d29922; }
+    .risk-Low      { background: rgba(88, 166, 255, .15); color: #58a6ff; }
+    .risk-Safe     { background: rgba(63, 185, 80, .15);  color: #3fb950; }
+    .verdict-meta  { color: var(--muted); margin-top: 8px; font-size: .9rem; }
+
+    /* ── Score Dial ────────────────────────────────────── */
+    .score-wrap { margin-left: auto; text-align: center; }
+    .score-dial {
+      width:          110px;
+      height:         110px;
+      border-radius:  50%;
+      border:         6px solid var(--border);
+      display:        flex;
+      align-items:    center;
+      justify-content: center;
+      flex-direction: column;
+    }
+    .score-dial .score-num { font-size: 2rem;  font-weight: 900; }
+    .score-dial .score-lbl { font-size: .7rem; color: var(--muted); }
+    .score-high { border-color: var(--danger); }
+    .score-med  { border-color: var(--warn); }
+    .score-low  { border-color: var(--safe); }
+
+    /* ── 2-column Grid ─────────────────────────────────── */
+    .grid-2 {
+      display:               grid;
+      grid-template-columns: 1fr 1fr;
+      gap:                   20px;
+      margin-bottom:         20px;
+    }
+    @media (max-width: 680px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    /* ── Card ──────────────────────────────────────────── */
+    .card {
+      background:    var(--surface);
+      border:        1px solid var(--border);
+      border-radius: 12px;
+      padding:       22px;
+    }
+    .card h3 {
+      font-size:    1rem;
+      font-weight:  700;
+      margin-bottom: 16px;
+      display:      flex;
+      align-items:  center;
+      gap:          8px;
+    }
+
+    /* ── Info Rows ─────────────────────────────────────── */
+    .info-row {
+      display:         flex;
+      justify-content: space-between;
+      padding:         8px 0;
+      border-bottom:   1px solid var(--border);
+      font-size:       .9rem;
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-row .lbl       { color: var(--muted); }
+    .info-row .val       { font-weight: 600; }
+
+    /* ── Model Rows ────────────────────────────────────── */
+    .model-row {
+      display:       flex;
+      align-items:   center;
+      gap:           12px;
+      padding:       12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .model-row:last-child { border-bottom: none; }
+    .model-name {
+      font-weight: 600;
+      font-size:   .9rem;
+      min-width:   130px;
+    }
+    .model-pred {
+      padding:       3px 10px;
+      border-radius: 20px;
+      font-size:     .8rem;
+      font-weight:   600;
+    }
+    .pred-malware  { background: rgba(248, 81, 73, .18); color: var(--danger); }
+    .pred-goodware { background: rgba(63, 185, 80, .15); color: var(--safe); }
+
+    .prob-bar-wrap {
+      flex:          1;
+      background:    var(--border);
+      border-radius: 4px;
+      height:        8px;
+    }
+    .prob-bar {
+      height:        100%;
+      border-radius: 4px;
+      transition:    width .8s ease;
+    }
+    .prob-high { background: var(--danger); }
+    .prob-med  { background: var(--warn); }
+    .prob-low  { background: var(--safe); }
+    .prob-val  {
+      font-size:  .82rem;
+      color:      var(--muted);
+      min-width:  48px;
+      text-align: right;
+    }
+
+    /* ── Tag Cloud ─────────────────────────────────────── */
+    .tag-cloud { display: flex; flex-wrap: wrap; gap: 7px; }
+    .tag {
+      background:    rgba(88, 166, 255, .1);
+      border:        1px solid rgba(88, 166, 255, .2);
+      color:         var(--accent);
+      padding:       4px 10px;
+      border-radius: 6px;
+      font-size:     .78rem;
+      font-family:   monospace;
+      word-break:    break-all;
+    }
+    .tag.api {
+      background:   rgba(248, 81, 73, .08);
+      border-color: rgba(248, 81, 73, .2);
+      color:        var(--danger);
+    }
+    .empty-tag { color: var(--muted); font-size: .85rem; }
+
+    /* ── Vote Bar ──────────────────────────────────────── */
+    .vote-wrap { margin-top: 12px; }
+    .vote-bar {
+      display:       flex;
+      height:        18px;
+      border-radius: 6px;
+      overflow:      hidden;
+      margin:        8px 0;
+    }
+    .vote-mal {
+      background:      var(--danger);
+      display:         flex;
+      align-items:     center;
+      justify-content: center;
+      font-size:       .72rem;
+      color:           #fff;
+      font-weight:     700;
+    }
+    .vote-good {
+      background:      var(--safe);
+      display:         flex;
+      align-items:     center;
+      justify-content: center;
+      font-size:       .72rem;
+      color:           #000;
+      font-weight:     700;
+    }
+    .vote-lbl {
+      display:         flex;
+      justify-content: space-between;
+      font-size:       .8rem;
+      color:           var(--muted);
+    }
+
+    /* ── Footer ────────────────────────────────────────── */
+    footer {
+      text-align:   center;
+      padding:      32px;
+      color:        var(--muted);
+      font-size:    .82rem;
+      border-top:   1px solid var(--border);
+      margin-top:   40px;
+    }
+  </style>
+</head>
+<body>
+
+  {# ── Jinja2 variables ───────────────────────────────── #}
+  {% set v      = result.verdict %}
+  {% set is_mal = (v.verdict == "malware") %}
+
+  {# ── Nav ────────────────────────────────────────────── #}
+  <nav>
+    <div class="logo">
+      <span>&#x1F6E1;&#xFE0F;</span> APK Malware Detector
+    </div>
+    <a href="/">Analyze</a>
+    <a href="/models">Models</a>
+    <a href="/" class="new-btn">+ New Analysis</a>
+  </nav>
+
+  <div class="container">
+
+    {# ── Verdict Banner ───────────────────────────────── #}
+    <div class="verdict-banner {% if is_mal %}malware{% else %}goodware{% endif %}">
+
+      <div class="verdict-icon">
+        {% if is_mal %}&#x1F6A8;{% else %}&#x2705;{% endif %}
+      </div>
+
+      <div class="verdict-text">
+        <h2 style="color: {% if is_mal %}var(--danger){% else %}var(--safe){% endif %};">
+          {% if is_mal %}MALWARE DETECTED{% else %}GOODWARE &mdash; CLEAN{% endif %}
+        </h2>
+
+        <span class="risk-pill risk-{{ v.risk_level }}">{{ v.risk_level }} Risk</span>
+
+        <div class="verdict-meta">
+          {{ v.total_models }} model{% if v.total_models != 1 %}s{% endif %} analysed
+          &nbsp;&middot;&nbsp;
+          {{ v.mal_votes }} malware vote{% if v.mal_votes != 1 %}s{% endif %}
+          /
+          {{ v.good_votes }} goodware vote{% if v.good_votes != 1 %}s{% endif %}
+          &nbsp;&middot;&nbsp;
+          {{ v.confidence }}% ensemble confidence
+        </div>
+      </div>
+
+      {# ── Score Dial ─────────────────────────────────── #}
+      <div class="score-wrap">
+        <div class="score-dial
+          {% if v.score >= 60 %}score-high
+          {% elif v.score >= 30 %}score-med
+          {% else %}score-low{% endif %}">
+
+          <span class="score-num"
+            style="color: {% if v.score >= 60 %}var(--danger){% elif v.score >= 30 %}var(--warn){% else %}var(--safe){% endif %};">
+            {{ v.score }}
+          </span>
+          <span class="score-lbl">RISK SCORE</span>
+        </div>
+        <div style="font-size: .75rem; color: var(--muted); margin-top: 6px;">out of 100</div>
+      </div>
+    </div>
+
+    {# ── Top 2-col Grid ───────────────────────────────── #}
+    <div class="grid-2">
+
+      {# File Information card #}
+      <div class="card">
+        <h3>&#x1F4C1; File Information</h3>
+
+        <div class="info-row">
+          <span class="lbl">Filename</span>
+          <span class="val" style="max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
+            {{ result.filename }}
+          </span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Size</span>
+          <span class="val">{{ result.apk_size_kb }} KB</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">DEX files</span>
+          <span class="val">{{ result.dex_count }}</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Features active</span>
+          <span class="val">{{ result.features_active }} / {{ result.features_total }}</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Permissions matched</span>
+          <span class="val">{{ result.permissions_active | length }}</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Dangerous APIs found</span>
+          <span class="val">{{ result.apis_active | length }}</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Feature extraction</span>
+          <span class="val">{{ result.extract_ms }} ms</span>
+        </div>
+        <div class="info-row">
+          <span class="lbl">Model inference</span>
+          <span class="val">{{ result.infer_ms }} ms</span>
+        </div>
+
+        {% if result.extract_error %}
+        <div class="info-row">
+          <span class="lbl" style="color: var(--warn);">&#x26A0; Warning</span>
+          <span class="val" style="color: var(--warn); font-size: .8rem;">{{ result.extract_error }}</span>
+        </div>
+        {% endif %}
+      </div>
+
+      {# Model Predictions card #}
+      <div class="card">
+        <h3>&#x1F916; Model Predictions</h3>
+
+        {% for name, res in result.model_results.items() %}
+          {% if "error" not in res %}
+          <div class="model-row">
+            <div class="model-name">{{ name }}</div>
+            <div class="model-pred pred-{{ res.prediction }}">
+              {{ res.prediction | upper }}
+            </div>
+            <div class="prob-bar-wrap">
+              <div class="prob-bar
+                {% if res.malware_prob >= 60 %}prob-high
+                {% elif res.malware_prob >= 30 %}prob-med
+                {% else %}prob-low{% endif %}"
+                style="width: {{ res.malware_prob }}%;">
+              </div>
+            </div>
+            <div class="prob-val">{{ res.malware_prob }}%</div>
+          </div>
+
+          {% else %}
+          <div class="model-row">
+            <div class="model-name">{{ name }}</div>
+            <span style="color: var(--muted); font-size: .83rem;">
+              Error: {{ res.error }}
+            </span>
+          </div>
+          {% endif %}
+        {% endfor %}
+
+        {# Ensemble Vote Bar #}
+        <div class="vote-wrap">
+          <div style="font-size: .82rem; color: var(--muted); margin-top: 10px; margin-bottom: 4px;">
+            Ensemble vote
+          </div>
+          <div class="vote-bar">
+            {% if v.total_models > 0 %}
+              {% set mal_pct  = ((v.mal_votes  / v.total_models) * 100) | round | int %}
+              {% set good_pct = ((v.good_votes / v.total_models) * 100) | round | int %}
+              <div class="vote-mal"  style="width: {{ mal_pct }}%;">
+                {% if v.mal_votes  > 0 %}{{ v.mal_votes }}M{% endif %}
+              </div>
+              <div class="vote-good" style="width: {{ good_pct }}%;">
+                {% if v.good_votes > 0 %}{{ v.good_votes }}G{% endif %}
+              </div>
+            {% endif %}
+          </div>
+          <div class="vote-lbl">
+            <span>&#x2B1B; Malware</span>
+            <span>Goodware &#x2B1B;</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# ── Dangerous APIs card ──────────────────────────── #}
+    <div class="card" style="margin-bottom: 20px;">
+      <h3>&#x26A1; Dangerous API Calls Detected ({{ result.apis_active | length }})</h3>
+      <div class="tag-cloud">
+        {% if result.apis_active %}
+          {% for api in result.apis_active %}
+            {% if ";->" in api %}
+              {% set api_label = api.split(";->")[1] %}
+            {% else %}
+              {% set api_label = api %}
+            {% endif %}
+            <span class="tag api" title="{{ api }}">{{ api_label }}</span>
+          {% endfor %}
+        {% else %}
+          <span class="empty-tag">No dangerous API calls detected</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ── Permissions card ─────────────────────────────── #}
+    {% set dangerous_perms = [
+      "READ_SMS", "SEND_SMS", "RECORD_AUDIO", "READ_CONTACTS",
+      "READ_CALL_LOG", "CAMERA", "ACCESS_FINE_LOCATION", "CALL_PHONE",
+      "READ_PHONE_STATE", "PROCESS_OUTGOING_CALLS", "RECEIVE_SMS",
+      "WRITE_CONTACTS", "WRITE_CALL_LOG", "GET_ACCOUNTS"
+    ] %}
+
+    <div class="card" style="margin-bottom: 20px;">
+      <h3>&#x1F511; Permissions Matched ({{ result.permissions_active | length }})</h3>
+      <div class="tag-cloud">
+        {% if result.permissions_active %}
+          {% for perm in result.permissions_active | sort %}
+            <span class="tag {% if perm in dangerous_perms %}api{% endif %}"
+                  title="{{ perm }}">{{ perm }}</span>
+          {% endfor %}
+        {% else %}
+          <span class="empty-tag">No permissions detected</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ── Interpretation card ───────────────────────────── #}
+    <div class="card">
+      <h3>&#x1F4A1; Interpretation</h3>
+      <p style="color: var(--muted); line-height: 1.7; font-size: .92rem;">
+        {% if is_mal %}
+          This APK shows characteristics commonly associated with
+          <strong style="color: var(--danger);">malicious Android applications</strong>.
+          The ensemble of {{ v.total_models }} ML models voted
+          {{ v.mal_votes }}&ndash;{{ v.good_votes }} in favour of malware
+          with a risk score of
+          <strong style="color: var(--danger);">{{ v.score }}/100</strong>.
+          {% if result.apis_active %}
+            Particularly concerning are the
+            <strong>{{ result.apis_active | length }} dangerous API call(s)</strong>
+            found in the DEX bytecode, which indicate capabilities such as
+            reflection, crypto, runtime execution, or device information harvesting.
+          {% endif %}
+          Do <strong>not</strong> install this application on a production device.
+        {% else %}
+          This APK appears
+          <strong style="color: var(--safe);">benign</strong>
+          based on its permission and API call profile.
+          The ensemble voted {{ v.good_votes }}&ndash;{{ v.mal_votes }} for goodware
+          with a risk score of
+          <strong style="color: var(--safe);">{{ v.score }}/100</strong>.
+          Note that ML-based detection may not catch zero-day or heavily obfuscated malware.
+          Always verify from a trusted source.
+        {% endif %}
+      </p>
+    </div>
+
+  </div>{# /container #}
+
+  <footer>
+    Analysis ID: {{ result.job_id }}
+    &nbsp;|&nbsp; TUANDROMD Dataset
+    &nbsp;|&nbsp; Feature-based Android Malware Detection
+  </footer>
+
+</body>
+</html>
