@@ -3,11 +3,21 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- ── Permissions ─────────────────────────────────────────────── -->
+    <!-- Needed to hand a scanned APK to the system installer. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!--
+        APKs opened through the file picker (ACTION_GET_CONTENT) or "Open with" arrive as a
+        content:// URI with a temporary read grant, so no storage permission is required.
+    -->
+
+    <!-- Lets the ACTION_VIEW install intent resolve on Android 11+ (package visibility). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+    </queries>
 
     <application
         android:name="${applicationName}"
@@ -21,12 +31,10 @@
         android:usesCleartextTraffic="false"
         tools:targetApi="31">
 
-        <!-- ── Flutter v2 embedding metadata (REQUIRED — fixes the error) ── -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- ── Main Activity ───────────────────────────────────────── -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -36,18 +44,16 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:theme="@style/LaunchTheme">
 
-            <!-- Normal theme after Flutter renders first frame -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
-            <!-- Launcher intent -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- "Open with RAT3" — appears in file manager open-with dialog -->
+            <!-- "Scan with RAT3" in the file-manager open-with dialog -->
             <intent-filter android:label="@string/scan_with_rat3">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -56,7 +62,7 @@
 
         </activity>
 
-        <!-- ── FileProvider (required for system installer on API 24+) ── -->
+        <!-- Shares the copied APK from cache/apk_scan/ with the system installer only. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

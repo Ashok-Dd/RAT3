@@ -1,238 +1,192 @@
 package com.example.rat3.scanner
 
 import android.content.Context
-import org.json.JSONArray
 import org.json.JSONObject
-import java.io.File
-import java.util.zip.ZipFile
+import com.example.rat3.scanner.ScannerConfig.Layer3 as Cfg
 
 /**
- * Layer 3 — Malware Signature Scanner
+ * Layer 3 — Malware Signature & Reputation Check.
  *
- * Scans APK content against a signature database (assets/signatures.json) plus
- * heuristic checks for obfuscation, suspicious native libs, and network indicators.
+ *  1. SHA-256 file blocklist (`assets/blocklist.json`) — an exact hit forces a malicious verdict.
+ *  2. Signature patterns (`assets/signatures.json` via [Signatures]).
+ *  3. Signing-certificate check (`assets/trusted_certs.json`) — a trusted package name signed by
+ *     the wrong certificate is a repackaging / trojanisation indicator.
+ *  4. Obfuscation, suspicious native libraries, and network (C2) indicators.
+ *
+ * `rawData.hardHit` is set true when 1, 2 or 3 produced a real detection; the decision engine
+ * uses that (not a raw score threshold) to decide whether to escalate the verdict.
  */
 class Layer3SignatureScanner(
-    private val apkFile: File,
+    private val ctx: ApkContext,
     private val context: Context,
 ) {
 
-    private data class Signature(
-        val id: String,
-        val name: String,
-        val family: String,
-        val pattern: String,
-        val isRegex: Boolean,
-        val riskWeight: Int,
-    )
-
     fun analyze(): JSONObject {
-        val findings      = mutableListOf<JSONObject>()
-        var riskScore     = 0
+        val findings = mutableListOf<JSONObject>()
+        var score = 0
         var matchedFamily = "None"
+        var hardHit = false
 
-        return try {
-            val signatures = loadSignatures()
-            val apkContent = extractScanContent()
-
-            // 1. Signature matching
-            for (sig in signatures) {
-                val hit = if (sig.isRegex) {
-                    try { Regex(sig.pattern).containsMatchIn(apkContent) } catch (e: Exception) { false }
-                } else {
-                    apkContent.contains(sig.pattern)
-                }
-                if (hit) {
-                    riskScore    += sig.riskWeight
-                    matchedFamily = sig.family
-                    findings += finding(
-                        "Signature match [${sig.id}]: ${sig.name} — family: ${sig.family}",
-                        isWarning = true,
-                        category = "signature"
-                    )
-                }
-            }
-
-            // 2. Obfuscation
-            riskScore += detectObfuscation(apkContent, findings)
-
-            // 3. Native libraries
-            riskScore += detectNativeLibraries(findings)
-
-            // 4. Network indicators
-            riskScore += detectNetworkIndicators(apkContent, findings)
-
-            if (findings.none { it.optBoolean("isWarning") }) {
-                findings += finding("No known malware signatures detected. ✓", isWarning = false)
-            }
-
-            buildLayerJson(
-                layerName = "Malware Signature Check",
-                riskScore = riskScore,
-                findings = findings,
-                rawData = JSONObject().apply {
-                    put("signaturesChecked", signatures.size)
-                    put("matchedFamily", matchedFamily)
-                }
-            )
-        } catch (e: Exception) {
-            buildLayerJson(
-                layerName = "Malware Signature Check",
-                riskScore = 20,
-                findings = listOf(finding("Signature scan error: ${e.message}", isWarning = true)),
-                rawData = JSONObject()
+        // 1. Blocklist ------------------------------------------------------------------------
+        val blocklist = Reputation.loadBlocklist(context)
+        if (ctx.sha256.lowercase() in blocklist) {
+            score += Cfg.BLOCKLIST_HIT_POINTS
+            hardHit = true
+            matchedFamily = "Blocklisted"
+            findings += finding(
+                "File hash is on the known-malware blocklist (SHA-256 ${ctx.sha256.take(16)}…).",
+                isWarning = true,
+                category = "blocklist",
             )
         }
-    }
 
-    private fun loadSignatures(): List<Signature> {
-        return try {
-            val json = context.assets.open("signatures.json").bufferedReader().use { it.readText() }
-            val arr  = JSONArray(json)
-            (0 until arr.length()).map { i ->
-                val obj = arr.getJSONObject(i)
-                Signature(
-                    id         = obj.getString("id"),
-                    name       = obj.getString("name"),
-                    family     = obj.getString("family"),
-                    pattern    = obj.getString("pattern"),
-                    isRegex    = obj.optBoolean("isRegex", false),
-                    riskWeight = obj.optInt("riskWeight", 20)
+        // 2. Signatures ---------------------------------------------------------------------
+        for (sig in Signatures.load(context)) {
+            if (sig.matches(ctx.scanText)) {
+                score += sig.riskWeight
+                matchedFamily = sig.family
+                hardHit = true
+                findings += finding(
+                    "Signature ${sig.id}: ${sig.name} — family ${sig.family}.",
+                    isWarning = true,
+                    category = "signature",
                 )
             }
-        } catch (e: Exception) {
-            builtInSignatures()
         }
+
+        // 3. Repackaging / signing --------------------------------------------------------
+        score += checkSigning(findings).also { if (it >= Cfg.REPACKAGE_MISMATCH_POINTS) hardHit = true }
+
+        // 4. Heuristics -------------------------------------------------------------------
+        score += detectObfuscation(findings)
+        score += detectNativeLibraries(findings)
+        score += detectNetworkIndicators(findings)
+
+        if (findings.none { it.optBoolean("isWarning") }) {
+            findings += finding("No known malware signatures or reputation hits.", isWarning = false)
+        }
+
+        return buildLayerJson(
+            layerName = "Malware Signature Check",
+            riskScore = score,
+            findings = findings,
+            rawData = JSONObject().apply {
+                put("matchedFamily", matchedFamily)
+                put("hardHit", hardHit)
+                put("sha256", ctx.sha256)
+                put("debugSigned", ctx.isDebugSigned)
+            },
+        )
     }
 
-    private fun builtInSignatures(): List<Signature> = listOf(
-        Signature("B001", "AndroRAT marker",           "AndroRAT",    "AndroRAT",          false, 50),
-        Signature("B002", "SpyNote package",           "SpyNote",     "com.spynote",       false, 55),
-        Signature("B003", "Crypto miner stratum",      "CryptoMiner", "stratum+tcp",       false, 40),
-        Signature("B004", "Root shell access",         "RootExploit", "/system/xbin/su",   false, 55),
-        Signature("B005", "Banking trojan SIM check",  "BankBot",     "getSimCountryIso",  false, 25),
-        Signature("B006", "SMS stealer log reader",    "SMSStealer",  "readSmsLog",        false, 35),
-        Signature("B007", "Ransomware locked ext",     "Ransomware",  "\\.locked",         true,  60),
-        Signature("B008", "Tor .onion address",        "Covert",      ".onion",            false, 40),
-        Signature("B009", "Dynamic DNS domain",        "RAT",         "dyndns.org",        false, 20),
-        Signature("B010", "Fake Google Play SDK",      "Adware",      "com.google.play.fakesdk", false, 45)
-    )
+    // ── signing / repackaging ────────────────────────────────────────────────────────────
 
-    private fun detectObfuscation(content: String, findings: MutableList<JSONObject>): Int {
+    private fun checkSigning(findings: MutableList<JSONObject>): Int {
         var score = 0
-
-        val b64Matches = Regex("[A-Za-z0-9+/]{200,}={0,2}").findAll(content).count()
-        if (b64Matches > 5) {
-            score += 15
+        val trusted = Reputation.loadTrustedCerts(context)[ctx.packageName]
+        if (trusted != null) {
+            val ok = ctx.signerCertSha256.any { it.lowercase() in trusted }
+            if (!ok) {
+                score += Cfg.REPACKAGE_MISMATCH_POINTS
+                findings += finding(
+                    "Package '${ctx.packageName}' is normally published by a known developer, but " +
+                        "this copy is signed by a different certificate — likely repackaged.",
+                    isWarning = true,
+                    category = "repackaging",
+                )
+            }
+        }
+        if (ctx.isDebugSigned) {
+            score += Cfg.DEBUG_SIGNED_POINTS
             findings += finding(
-                "$b64Matches large Base64 blob(s) found — possible encrypted payload.",
+                "Signed with a debug certificate — not a store-published build.",
                 isWarning = true,
-                category = "obfuscation"
+                category = "signing",
             )
         }
+        return score
+    }
 
-        val shortClassCount = Regex("""L[a-z]/[a-z];""").findAll(content).count()
-        if (shortClassCount > 20) {
-            score += 10
+    // ── heuristics ───────────────────────────────────────────────────────────────────────
+
+    private fun detectObfuscation(findings: MutableList<JSONObject>): Int {
+        // Only look at text resources/assets, not raw DEX bytecode (which trips the regex by chance).
+        val resourceText = ctx.scanText.removePrefix(ctx.dexText)
+        val blobs = Regex("[A-Za-z0-9+/]{${Cfg.OBFUSCATION_BASE64_MIN_LEN},}={0,2}")
+            .findAll(resourceText).count()
+        if (blobs >= Cfg.OBFUSCATION_BASE64_MIN_COUNT) {
             findings += finding(
-                "Heavy class-name obfuscation ($shortClassCount single-letter classes).",
+                "$blobs large Base64 blobs in resources/assets — possible encrypted payload.",
                 isWarning = true,
-                category = "obfuscation"
+                category = "obfuscation",
             )
+            return Cfg.OBFUSCATION_POINTS
         }
-
-        return score.coerceAtMost(30)
+        return 0
     }
 
     private fun detectNativeLibraries(findings: MutableList<JSONObject>): Int {
+        val knownBad = setOf("libhook", "libinject", "libspy", "libsuperhide", "libfrida", "libsubstrate")
         var score = 0
-        val flaggedNames = setOf("libhook", "libinject", "libspy", "libroot", "libsuperhide")
 
-        ZipFile(apkFile).use { zip ->
-            val libs = zip.entries().asSequence()
-                .filter { it.name.endsWith(".so") }
-                .map { it.name }
-                .toList()
-
-            val flagged = libs.filter { lib -> flaggedNames.any { lib.contains(it) } }
-
-            if (flagged.isNotEmpty()) {
-                score += 30
-                findings += finding(
-                    "Suspicious native libraries: ${flagged.joinToString()}",
-                    isWarning = true,
-                    category = "native_lib"
-                )
-            } else if (libs.isNotEmpty()) {
-                val warn = libs.size > 3
-                if (warn) score += 10
-                findings += finding(
-                    "${libs.size} native .so library(s) found.",
-                    isWarning = warn,
-                    category = "native_lib"
-                )
-            }
+        val flagged = ctx.nativeLibs.filter { lib -> knownBad.any { lib.contains(it, ignoreCase = true) } }
+        if (flagged.isNotEmpty()) {
+            score += Cfg.NATIVE_LIB_KNOWN_BAD_POINTS
+            findings += finding(
+                "Suspicious native library name(s): ${flagged.joinToString()}",
+                isWarning = true,
+                category = "native_lib",
+            )
         }
 
-        return score.coerceAtMost(40)
+        val misplaced = ctx.nativeLibs.filter { it.startsWith("assets/") || it.startsWith("res/") }
+        if (misplaced.isNotEmpty()) {
+            score += Cfg.NATIVE_LIB_WRONG_LOCATION_POINTS
+            findings += finding(
+                "Native library outside lib/ (${misplaced.first()}…) — often used to hide a payload.",
+                isWarning = true,
+                category = "native_lib",
+            )
+        }
+        return score
     }
 
-    private fun detectNetworkIndicators(content: String, findings: MutableList<JSONObject>): Int {
+    private fun detectNetworkIndicators(findings: MutableList<JSONObject>): Int {
         var score = 0
+        val content = ctx.scanText
 
-        val ips = Regex("""(\d{1,3}\.){3}\d{1,3}:\d{4,5}""")
+        val ips = Regex("""(?<![\d.])(\d{1,3}\.){3}\d{1,3}:\d{2,5}""")
             .findAll(content).take(5).map { it.value }.toList()
         if (ips.isNotEmpty()) {
-            score += 20
+            score += Cfg.NETWORK_HARDCODED_IP_POINTS
             findings += finding(
-                "Hardcoded IP:port addresses: ${ips.joinToString()} — possible C2 server.",
+                "Hardcoded IP:port address(es): ${ips.joinToString()} — possible C2 endpoint.",
                 isWarning = true,
-                category = "network"
+                category = "network",
             )
         }
 
         if (content.contains(".onion")) {
-            score += 35
+            score += Cfg.NETWORK_ONION_POINTS
             findings += finding(
-                ".onion (Tor) address found — rare in legitimate apps.",
+                ".onion (Tor) address present — very rare in legitimate apps.",
                 isWarning = true,
-                category = "network"
+                category = "network",
             )
         }
 
-        listOf("dyndns.org", "no-ip.com", "duckdns.org", "afraid.org").forEach { domain ->
+        var dnsScore = 0
+        for (domain in listOf("dyndns.org", "no-ip.com", "duckdns.org", "afraid.org", "ddns.net")) {
             if (content.contains(domain)) {
-                score += 15
+                dnsScore += Cfg.NETWORK_DYNAMIC_DNS_POINTS
                 findings += finding(
-                    "Dynamic DNS domain: $domain — commonly abused by malware.",
+                    "Dynamic-DNS domain: $domain — commonly abused for C2.",
                     isWarning = true,
-                    category = "network"
+                    category = "network",
                 )
             }
         }
-
-        return score.coerceAtMost(50)
-    }
-
-    private fun extractScanContent(): String {
-        val sb = StringBuilder()
-        val scanExtensions = setOf("dex", "xml", "json", "js", "html", "txt")
-
-        ZipFile(apkFile).use { zip ->
-            zip.entries().asSequence()
-                .filter { !it.isDirectory }
-                .filter { entry -> entry.name.substringAfterLast('.').lowercase() in scanExtensions }
-                .take(25)
-                .forEach { entry ->
-                    try {
-                        zip.getInputStream(entry).use { stream ->
-                            sb.append(stream.readBytes().toString(Charsets.ISO_8859_1))
-                        }
-                    } catch (e: Exception) {
-                        // Skip unreadable entries
-                    }
-                }
-        }
-        return sb.toString()
+        score += minOf(dnsScore, Cfg.NETWORK_DYNAMIC_DNS_CAP)
+        return score
     }
 }

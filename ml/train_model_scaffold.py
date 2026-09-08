@@ -1,17 +1,23 @@
 """
-RAT3 Sample Model Generator
-============================
+RAT3 — model training scaffold
+==============================
 
-Generates a dummy sklearn model (sample_model.pkl) for development purposes.
+NOT USED BY THE APP. The shipped Layer 4 is a hand-weighted heuristic
+(`HeuristicRiskModel` in Kotlin), not a trained classifier.
 
-This is NOT a trained malware detection model.
-It simply demonstrates the interface and feature schema.
+This script is a starting point for training a *real* model later. Right now it
+trains a RandomForest on **synthetic** data from `generate_dummy_data()`, so the
+result is meaningless for real malware detection — the model just re-learns the
+generator's own rules.
 
-Run this script once to produce sample_model.pkl:
-    python generate_sample_model.py
+To make it real:
+  1. Replace `generate_dummy_data()` with feature extraction over a labelled APK
+     dataset (see ml/feature_schema.md, "Future work").
+  2. Add a held-out test split and report precision / recall / ROC-AUC.
+  3. Export to TensorFlow Lite and bundle under android/app/src/main/assets/.
 
-Replace with real_model.pkl (trained on real APK data) for production.
-See ml/feature_schema.md for training instructions.
+The 17-feature order below must stay in sync with ml/feature_schema.md and
+Layer4HeuristicModel.buildFeatureVector().
 """
 
 import pickle

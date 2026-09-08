@@ -1,16 +1,15 @@
-/// Data models for APK scan results.
-/// All data flows from Kotlin scanner via Platform Channels as JSON.
+/// Data models for APK scan results. All data arrives from the Kotlin scanner as
+/// JSON over a platform channel.
+library;
+
+int _asInt(Object? value) => switch (value) {
+  final int v => v,
+  final num v => v.round(),
+  final String v => int.tryParse(v) ?? 0,
+  _ => 0,
+};
 
 class ScanResult {
-  final String apkPath;
-  final String verdict;       // 'SAFE', 'SUSPICIOUS', 'MALICIOUS'
-  final String summary;
-  final int overallRiskScore; // 0–100
-  final LayerResult layer1;
-  final LayerResult layer2;
-  final LayerResult layer3;
-  final LayerResult layer4;
-
   ScanResult({
     required this.apkPath,
     required this.verdict,
@@ -23,85 +22,75 @@ class ScanResult {
   });
 
   factory ScanResult.fromJson(Map<String, dynamic> json) {
+    LayerResult layer(String key) => LayerResult.fromJson(
+      (json[key] as Map?)?.cast<String, dynamic>() ?? const {},
+    );
     return ScanResult(
-      apkPath: json['apkPath'] ?? '',
-      verdict: json['verdict'] ?? 'SAFE',
-      summary: json['summary'] ?? '',
-      overallRiskScore: json['overallRiskScore'] ?? 0,
-      layer1: LayerResult.fromJson(json['layer1'] ?? {}),
-      layer2: LayerResult.fromJson(json['layer2'] ?? {}),
-      layer3: LayerResult.fromJson(json['layer3'] ?? {}),
-      layer4: LayerResult.fromJson(json['layer4'] ?? {}),
+      apkPath: json['apkPath'] as String? ?? '',
+      verdict: json['verdict'] as String? ?? 'SAFE',
+      summary: json['summary'] as String? ?? '',
+      overallRiskScore: _asInt(json['overallRiskScore']),
+      layer1: layer('layer1'),
+      layer2: layer('layer2'),
+      layer3: layer('layer3'),
+      layer4: layer('layer4'),
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        'apkPath': apkPath,
-        'verdict': verdict,
-        'summary': summary,
-        'overallRiskScore': overallRiskScore,
-        'layer1': layer1.toJson(),
-        'layer2': layer2.toJson(),
-        'layer3': layer3.toJson(),
-        'layer4': layer4.toJson(),
-      };
+  final String apkPath;
+
+  /// One of `SAFE`, `SUSPICIOUS`, `MALICIOUS`.
+  final String verdict;
+  final String summary;
+
+  /// 0–100.
+  final int overallRiskScore;
+  final LayerResult layer1;
+  final LayerResult layer2;
+  final LayerResult layer3;
+  final LayerResult layer4;
+
+  List<LayerResult> get layers => [layer1, layer2, layer3, layer4];
 }
 
 class LayerResult {
-  final String layerName;
-  final int riskScore;        // 0–100
-  final List<Finding> findings;
-  final Map<String, dynamic> rawData;
-
   LayerResult({
     required this.layerName,
     required this.riskScore,
     required this.findings,
-    this.rawData = const {},
+    this.analysisError = false,
   });
 
   factory LayerResult.fromJson(Map<String, dynamic> json) {
-    final findingsJson = json['findings'] as List<dynamic>? ?? [];
+    final rawFindings = json['findings'] as List<dynamic>? ?? const [];
+    final rawData =
+        (json['rawData'] as Map?)?.cast<String, dynamic>() ?? const {};
     return LayerResult(
-      layerName: json['layerName'] ?? '',
-      riskScore: json['riskScore'] ?? 0,
-      findings: findingsJson
-          .map((f) => Finding.fromJson(f as Map<String, dynamic>))
+      layerName: json['layerName'] as String? ?? '',
+      riskScore: _asInt(json['riskScore']),
+      findings: rawFindings
+          .map((f) => Finding.fromJson((f as Map).cast<String, dynamic>()))
           .toList(),
-      rawData: json['rawData'] as Map<String, dynamic>? ?? {},
+      analysisError: rawData['analysisError'] as bool? ?? false,
     );
   }
 
-  Map<String, dynamic> toJson() => {
-        'layerName': layerName,
-        'riskScore': riskScore,
-        'findings': findings.map((f) => f.toJson()).toList(),
-        'rawData': rawData,
-      };
+  final String layerName;
+  final int riskScore;
+  final List<Finding> findings;
+  final bool analysisError;
 }
 
 class Finding {
+  const Finding({required this.message, this.isWarning = false, this.category});
+
+  factory Finding.fromJson(Map<String, dynamic> json) => Finding(
+    message: json['message'] as String? ?? '',
+    isWarning: json['isWarning'] as bool? ?? false,
+    category: json['category'] as String?,
+  );
+
   final String message;
   final bool isWarning;
   final String? category;
-
-  Finding({
-    required this.message,
-    this.isWarning = false,
-    this.category,
-  });
-
-  factory Finding.fromJson(Map<String, dynamic> json) {
-    return Finding(
-      message: json['message'] ?? '',
-      isWarning: json['isWarning'] ?? false,
-      category: json['category'],
-    );
-  }
-
-  Map<String, dynamic> toJson() => {
-        'message': message,
-        'isWarning': isWarning,
-        'category': category,
-      };
 }

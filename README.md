@@ -25,7 +25,7 @@ layers, then fuses them into one verdict.
 |------:|------|----------------|
 | 1 | **App Safety Analysis** | Declared permissions (dangerous / suspicious), exported components, target/min SDK, accessibility-service abuse, DeviceAdmin receiver |
 | 2 | **Permission–Function Mismatch** | Declared permissions with no matching API in the DEX (over-privilege / obfuscation), plus a small set of always-dangerous APIs (`Runtime.exec`, `DexClassLoader`, `ProcessBuilder`, `ServerSocket`) |
-| 3 | **Malware Signature Check** | Substring / regex signatures (`assets/signatures.json`), SHA-256 file blocklist (`assets/blocklist.json`), signing-certificate / repackaging check (`assets/trusted_certs.json`), obfuscation & network (C2) indicators |
+| 3 | **Malware Signature Check** | Substring / regex signatures, SHA-256 file blocklist, signing-certificate / repackaging check (data in `android/app/src/main/assets/`), obfuscation & network (C2) indicators |
 | 4 | **Heuristic Risk Model** | A 17-feature vector (see `ml/feature_schema.md`) scored by a transparent weighted rule set |
 
 **Decision engine** (`DecisionEngine.kt`): `weighted = L1·0.20 + L2·0.20 + L3·0.35 + L4·0.25`,
@@ -82,11 +82,12 @@ flutter build apk --debug
 ## Repository layout
 
 ```
-lib/                 Flutter app (see Architecture)
-android/             Android host + Kotlin scanner + unit tests
-assets/              signatures.json, blocklist.json, trusted_certs.json
-ml/                  feature schema + (non-production) training scaffold
-test/                Dart tests
+lib/                             Flutter app (see Architecture)
+android/app/src/main/kotlin/     Android host + Kotlin scanner
+android/app/src/main/assets/     signatures.json, blocklist.json, trusted_certs.json
+android/app/src/test/kotlin/     Kotlin unit tests
+ml/                              feature schema + (non-production) training scaffold
+test/                            Dart tests
 ```
 
 ---

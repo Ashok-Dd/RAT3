@@ -1,0 +1,12 @@
+{
+  "_comment": "Maps a package name to the SHA-256 hash(es) of its legitimate signing certificate(s). If a scanned APK claims one of these package names but is signed by a different certificate, it is almost certainly a repackaged / trojanised build and is flagged. Fill this with certificates you have verified yourself (e.g. via `apksigner verify --print-certs` on a Play-store copy). The entries below are placeholders.",
+  "_format": "sha256 of the DER-encoded signing certificate, lowercase hex",
+  "packages": {
+    "com.whatsapp": [
+      "0000000000000000000000000000000000000000000000000000000000000000"
+    ],
+    "com.android.chrome": [
+      "0000000000000000000000000000000000000000000000000000000000000000"
+    ]
+  }
+}

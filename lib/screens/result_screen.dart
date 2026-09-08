@@ -1,46 +1,64 @@
 import 'package:flutter/material.dart';
+
 import '../models/scan_result.dart';
 import '../services/apk_scanner_service.dart';
+import '../theme/app_theme.dart';
+import '../widgets/info_card.dart';
+import '../widgets/layer_findings_card.dart';
+import '../widgets/section_label.dart';
 
+/// Shows the verdict, overall risk score, per-layer findings and the install action.
 class ResultScreen extends StatelessWidget {
-  final ScanResult result;
   const ResultScreen({super.key, required this.result});
+
+  final ScanResult result;
+
+  static const _layerMeta = [
+    (
+      title: 'Layer 1: App Safety Analysis',
+      icon: Icons.rule,
+      color: AppColors.primary,
+    ),
+    (
+      title: 'Layer 2: Permission Mismatch',
+      icon: Icons.compare_arrows,
+      color: AppColors.accentYellow,
+    ),
+    (
+      title: 'Layer 3: Malware Signatures',
+      icon: Icons.fingerprint,
+      color: AppColors.accentOrange,
+    ),
+    (
+      title: 'Layer 4: Heuristic Risk Model',
+      icon: Icons.psychology,
+      color: AppColors.accentTeal,
+    ),
+  ];
+
+  bool get _isSafe => result.verdict == 'SAFE';
+
+  Color get _verdictColor => switch (result.verdict) {
+    'SAFE' => AppColors.safe,
+    'SUSPICIOUS' => AppColors.suspicious,
+    _ => AppColors.danger,
+  };
 
   @override
   Widget build(BuildContext context) {
-    final isSafe = result.verdict == 'SAFE';
-    final isSuspicious = result.verdict == 'SUSPICIOUS';
-    final verdictColor = isSafe
-        ? const Color(0xFF1DE9B6)
-        : isSuspicious
-            ? const Color(0xFFFFD600)
-            : const Color(0xFFFF4444);
-
     return Scaffold(
-      backgroundColor: const Color(0xFF0D1117),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF161B22),
-        title: const Text('Scan Result', style: TextStyle(color: Colors.white)),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.of(context).pop(),
-        ),
-      ),
+      appBar: AppBar(title: const Text('Scan Result')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
         child: Column(
           children: [
-            // Verdict card
-            _buildVerdictCard(verdictColor, isSafe),
+            _verdictCard(),
             const SizedBox(height: 20),
-            // Risk score bar
-            _buildRiskScoreCard(),
+            _riskScoreCard(),
             const SizedBox(height: 20),
-            // Layer results
-            _buildLayerResults(),
+            _layerResults(),
             const SizedBox(height: 24),
-            // Action buttons
-            _buildActionButtons(context, isSafe),
+            _actions(context),
             const SizedBox(height: 20),
           ],
         ),
@@ -48,28 +66,17 @@ class ResultScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildVerdictCard(Color verdictColor, bool isSafe) {
-    return Container(
-      width: double.infinity,
+  Widget _verdictCard() {
+    return InfoCard(
+      glow: true,
+      borderColor: _verdictColor.withValues(alpha: 0.5),
       padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        color: const Color(0xFF161B22),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: verdictColor.withOpacity(0.5)),
-        boxShadow: [
-          BoxShadow(
-            color: verdictColor.withOpacity(0.1),
-            blurRadius: 20,
-            spreadRadius: 2,
-          ),
-        ],
-      ),
       child: Column(
         children: [
           Icon(
-            isSafe ? Icons.verified_user : Icons.gpp_bad,
+            _isSafe ? Icons.verified_user : Icons.gpp_bad,
             size: 64,
-            color: verdictColor,
+            color: _verdictColor,
           ),
           const SizedBox(height: 12),
           Text(
@@ -77,7 +84,7 @@ class ResultScreen extends StatelessWidget {
             style: TextStyle(
               fontSize: 32,
               fontWeight: FontWeight.bold,
-              color: verdictColor,
+              color: _verdictColor,
               letterSpacing: 3,
             ),
           ),
@@ -85,47 +92,28 @@ class ResultScreen extends StatelessWidget {
           Text(
             result.summary,
             textAlign: TextAlign.center,
-            style: const TextStyle(color: Color(0xFF8B949E), fontSize: 13),
+            style: const TextStyle(color: AppColors.textMuted, fontSize: 13),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildRiskScoreCard() {
+  Widget _riskScoreCard() {
     final score = result.overallRiskScore;
-    final scoreColor = score < 33
-        ? const Color(0xFF1DE9B6)
-        : score < 66
-            ? const Color(0xFFFFD600)
-            : const Color(0xFFFF4444);
-
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: const Color(0xFF161B22),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF30363D)),
-      ),
+    final color = AppColors.forScore(score);
+    return InfoCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
-                'OVERALL RISK SCORE',
-                style: TextStyle(
-                  color: Color(0xFF8B949E),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 2,
-                ),
-              ),
+              const SectionLabel('OVERALL RISK SCORE'),
               Text(
                 '$score / 100',
                 style: TextStyle(
-                  color: scoreColor,
+                  color: color,
                   fontWeight: FontWeight.bold,
                   fontSize: 16,
                 ),
@@ -137,8 +125,8 @@ class ResultScreen extends StatelessWidget {
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
               value: score / 100,
-              backgroundColor: const Color(0xFF0D1117),
-              valueColor: AlwaysStoppedAnimation<Color>(scoreColor),
+              backgroundColor: AppColors.background,
+              valueColor: AlwaysStoppedAnimation<Color>(color),
               minHeight: 8,
             ),
           ),
@@ -147,259 +135,180 @@ class ResultScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildLayerResults() {
-    final layers = [
-      {
-        'title': 'Layer 1: App Safety Analysis',
-        'result': result.layer1,
-        'icon': Icons.rule,
-        'color': const Color(0xFF00E5FF),
-      },
-      {
-        'title': 'Layer 2: Permission Mismatch',
-        'result': result.layer2,
-        'icon': Icons.compare_arrows,
-        'color': const Color(0xFFFFD600),
-      },
-      {
-        'title': 'Layer 3: Malware Signatures',
-        'result': result.layer3,
-        'icon': Icons.fingerprint,
-        'color': const Color(0xFFFF6D00),
-      },
-      {
-        'title': 'Layer 4: ML Prediction',
-        'result': result.layer4,
-        'icon': Icons.psychology,
-        'color': const Color(0xFF1DE9B6),
-      },
-    ];
-
+  Widget _layerResults() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'LAYER ANALYSIS',
-          style: TextStyle(
-            color: Color(0xFF8B949E),
-            fontSize: 11,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 2,
-          ),
-        ),
+        const SectionLabel('LAYER ANALYSIS'),
         const SizedBox(height: 12),
-        ...layers.map((l) => _buildLayerCard(l)).toList(),
+        for (var i = 0; i < _layerMeta.length; i++)
+          LayerFindingsCard(
+            title: _layerMeta[i].title,
+            icon: _layerMeta[i].icon,
+            accent: _layerMeta[i].color,
+            result: result.layers[i],
+          ),
       ],
     );
   }
 
-  Widget _buildLayerCard(Map<String, dynamic> data) {
-    final layerResult = data['result'] as LayerResult;
-    final riskColor = layerResult.riskScore < 33
-        ? const Color(0xFF1DE9B6)
-        : layerResult.riskScore < 66
-            ? const Color(0xFFFFD600)
-            : const Color(0xFFFF4444);
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF161B22),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: (data['color'] as Color).withOpacity(0.3),
-        ),
-      ),
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        leading: Icon(data['icon'] as IconData,
-            color: data['color'] as Color, size: 22),
-        title: Text(
-          data['title'] as String,
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 13,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: riskColor.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(20),
-          ),
-          child: Text(
-            '${layerResult.riskScore}',
-            style: TextStyle(
-              color: riskColor,
-              fontWeight: FontWeight.bold,
-              fontSize: 13,
-            ),
-          ),
-        ),
-        children: [
-          const Divider(color: Color(0xFF30363D)),
-          const SizedBox(height: 8),
-          ...layerResult.findings.map(
-            (f) => Padding(
-              padding: const EdgeInsets.only(bottom: 6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(
-                    f.isWarning ? Icons.warning_amber : Icons.info_outline,
-                    size: 14,
-                    color: f.isWarning
-                        ? const Color(0xFFFFD600)
-                        : const Color(0xFF8B949E),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      f.message,
-                      style: const TextStyle(
-                        color: Color(0xFFCDD9E5),
-                        fontSize: 12,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildActionButtons(BuildContext context, bool isSafe) {
-    if (isSafe) {
+  Widget _actions(BuildContext context) {
+    if (_isSafe) {
       return Column(
         children: [
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: ElevatedButton.icon(
-              onPressed: () => _proceedWithInstall(context),
-              icon: const Icon(Icons.install_mobile),
-              label: const Text(
-                'INSTALL APK',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.5,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1DE9B6),
-                foregroundColor: const Color(0xFF0D1117),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            ),
+          _primaryButton(
+            label: 'INSTALL APK',
+            icon: Icons.install_mobile,
+            color: AppColors.accentTeal,
+            onPressed: () => _confirmAndInstall(context),
           ),
           const SizedBox(height: 12),
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
             child: const Text(
               'Cancel',
-              style: TextStyle(color: Color(0xFF8B949E)),
-            ),
-          ),
-        ],
-      );
-    } else {
-      return Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFFF4444).withOpacity(0.1),
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                  color: const Color(0xFFFF4444).withOpacity(0.4)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.warning_amber,
-                    color: Color(0xFFFF4444), size: 20),
-                const SizedBox(width: 10),
-                const Expanded(
-                  child: Text(
-                    'This APK has been flagged as potentially dangerous. '
-                    'Installation is not recommended.',
-                    style:
-                        TextStyle(color: Color(0xFFFF9999), fontSize: 12),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: OutlinedButton.icon(
-              onPressed: () => _showRiskyInstallDialog(context),
-              icon: const Icon(Icons.warning_amber,
-                  color: Color(0xFFFF4444)),
-              label: const Text(
-                'INSTALL ANYWAY (RISK)',
-                style: TextStyle(
-                  color: Color(0xFFFF4444),
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              style: OutlinedButton.styleFrom(
-                side: const BorderSide(color: Color(0xFFFF4444)),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            height: 52,
-            child: ElevatedButton.icon(
-              onPressed: () => Navigator.of(context).pop(),
-              icon: const Icon(Icons.cancel),
-              label: const Text(
-                'CANCEL INSTALLATION',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1DE9B6),
-                foregroundColor: const Color(0xFF0D1117),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
+              style: TextStyle(color: AppColors.textMuted),
             ),
           ),
         ],
       );
     }
+
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.danger.withValues(alpha: 0.1),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.danger.withValues(alpha: 0.4)),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.warning_amber, color: AppColors.danger, size: 20),
+              SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'This APK has been flagged as potentially dangerous. Installation is not recommended.',
+                  style: TextStyle(color: AppColors.dangerText, fontSize: 12),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+        SizedBox(
+          width: double.infinity,
+          height: 52,
+          child: OutlinedButton.icon(
+            onPressed: () => _confirmRiskyInstall(context),
+            icon: const Icon(Icons.warning_amber, color: AppColors.danger),
+            label: const Text(
+              'INSTALL ANYWAY (RISK)',
+              style: TextStyle(
+                color: AppColors.danger,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.2,
+              ),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: AppColors.danger),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _primaryButton(
+          label: 'CANCEL INSTALLATION',
+          icon: Icons.cancel,
+          color: AppColors.accentTeal,
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+      ],
+    );
   }
 
-  Future<void> _showRiskyInstallDialog(BuildContext context) async {
-    final confirmed = await showDialog<bool>(
+  Widget _primaryButton({
+    required String label,
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon),
+        label: Text(
+          label,
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.2,
+          ),
+        ),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color,
+          foregroundColor: AppColors.background,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmAndInstall(BuildContext context) async {
+    final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF161B22),
+        backgroundColor: AppColors.surface,
+        title: const Text(
+          'Install this APK?',
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: const Text(
+          'RAT3 found no significant threats, but this is a heuristic scan — it cannot '
+          'guarantee the app is safe. Continue to the system installer?',
+          style: TextStyle(color: AppColors.textMuted),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: AppColors.textMuted),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accentTeal,
+            ),
+            child: const Text('Install'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && context.mounted) await _install(context);
+  }
+
+  Future<void> _confirmRiskyInstall(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Row(
           children: [
-            Icon(Icons.gpp_bad, color: Color(0xFFFF4444)),
+            Icon(Icons.gpp_bad, color: AppColors.danger),
             SizedBox(width: 8),
-            Text('Security Warning',
-                style: TextStyle(color: Colors.white, fontSize: 18)),
+            Text(
+              'Security Warning',
+              style: TextStyle(color: AppColors.textPrimary, fontSize: 18),
+            ),
           ],
         ),
         content: Column(
@@ -407,54 +316,61 @@ class ResultScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              'RAT3 has detected threats in this APK:',
-              style: TextStyle(color: Color(0xFF8B949E)),
+              'RAT3 detected threats in this APK:',
+              style: TextStyle(color: AppColors.textMuted),
             ),
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: const Color(0xFFFF4444).withOpacity(0.08),
+                color: AppColors.danger.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(8),
-                border:
-                    Border.all(color: const Color(0xFFFF4444).withOpacity(0.3)),
+                border: Border.all(
+                  color: AppColors.danger.withValues(alpha: 0.3),
+                ),
               ),
               child: Text(
                 result.summary,
-                style:
-                    const TextStyle(color: Color(0xFFFF9999), fontSize: 12),
+                style: const TextStyle(
+                  color: AppColors.dangerText,
+                  fontSize: 12,
+                ),
               ),
             ),
             const SizedBox(height: 16),
             const Text(
-              'By proceeding, you accept all responsibility for any damage caused. '
-              'This action is strongly discouraged.',
-              style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+              'By proceeding you accept all responsibility for any damage caused.',
+              style: TextStyle(color: AppColors.textMuted, fontSize: 12),
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel',
-                style: TextStyle(color: Color(0xFF1DE9B6))),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: AppColors.accentTeal),
+            ),
           ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFFFF4444),
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: AppColors.danger),
             child: const Text('Install Anyway'),
           ),
         ],
       ),
     );
-    if (confirmed == true && context.mounted) {
-      _proceedWithInstall(context);
-    }
+    if (ok == true && context.mounted) await _install(context);
   }
 
-  Future<void> _proceedWithInstall(BuildContext context) async {
-    await ApkScannerService().installApk(result.apkPath);
+  Future<void> _install(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await ApkScannerService().installApk(result.apkPath);
+    } on InstallPermissionRequiredException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('Install failed: $e')));
+    }
   }
 }
