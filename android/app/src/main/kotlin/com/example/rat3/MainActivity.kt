@@ -27,7 +27,7 @@ import com.example.rat3.scanner.DecisionEngine
 import com.example.rat3.scanner.Layer1SafetyAnalyzer
 import com.example.rat3.scanner.Layer2PermissionMismatch
 import com.example.rat3.scanner.Layer3SignatureScanner
-import com.example.rat3.scanner.Layer4HeuristicModel
+import com.example.rat3.scanner.Layer4MlClassifier
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -1833,7 +1833,7 @@ class MainActivity : FlutterActivity() {
                     pushProgress(1)
                     val l3 = Layer3SignatureScanner(ctx, applicationContext).analyze()
                     pushProgress(2)
-                    val l4 = Layer4HeuristicModel(ctx, l1, l2, l3).analyze()
+                    val l4 = Layer4MlClassifier(ctx, applicationContext).analyze()
                     pushProgress(3)
 
                     DecisionEngine(apkPath, l1, l2, l3, l4).computeVerdict().toString()

@@ -32,7 +32,9 @@ class DecisionEngine(
         val s4 = effectiveScore(layer4)
 
         val weighted = (s1 * Cfg.W1 + s2 * Cfg.W2 + s3 * Cfg.W3 + s4 * Cfg.W4).toInt()
-        val hardHit = layer3.optJSONObject("rawData")?.optBoolean("hardHit") == true
+        // Escalate on a Layer 3 signature/blocklist hit OR a confident Layer 4 ML verdict.
+        val hardHit = layer3.optJSONObject("rawData")?.optBoolean("hardHit") == true ||
+            layer4.optJSONObject("rawData")?.optBoolean("hardHit") == true
         val finalScore = (if (hardHit) maxOf(weighted, Cfg.ESCALATION_MIN_SCORE) else weighted)
             .coerceIn(0, 100)
 
@@ -80,6 +82,8 @@ class DecisionEngine(
     }
 
     private fun buildSummary(verdict: String, score: Int, hardHit: Boolean): String = buildString {
+        val mlVerdict = layer4.optJSONObject("rawData")?.optString("mlVerdict")
+        val mlVotes = layer4.optJSONObject("rawData")?.optInt("malVotes") ?: 0
         when (verdict) {
             "SAFE" -> append(
                 "This APK appears safe (risk score $score/100). " +
@@ -91,7 +95,12 @@ class DecisionEngine(
             )
             "MALICIOUS" -> {
                 append("HIGH RISK: this APK is likely malicious (risk score $score/100). ")
-                if (hardHit) append("A known malware signature or reputation hit was found. ")
+                if (layer3.optJSONObject("rawData")?.optBoolean("hardHit") == true) {
+                    append("A known malware signature or reputation hit was found. ")
+                }
+                if (mlVerdict == "malware") {
+                    append("The ML ensemble classified it as malware ($mlVotes/5 models agree). ")
+                }
                 append("Installation is strongly discouraged.")
             }
         }

@@ -40,6 +40,8 @@ class ApkContext private constructor(
     val dexText: String,
     val dexTruncated: Boolean,
     val scanText: String,
+    val manifestText: String,
+    val hasAnyActivity: Boolean,
     val manifestParseFailed: Boolean,
 ) {
 
@@ -175,6 +177,9 @@ class ApkContext private constructor(
                 dexText = dexText,
                 dexTruncated = dexTruncated,
                 scanText = scanText,
+                manifestText = manifestBytesText,
+                hasAnyActivity = (pkg?.activities?.isNotEmpty() == true) ||
+                    manifestBytesText.contains("activity", ignoreCase = true),
                 manifestParseFailed = manifestFailed,
             )
         }
