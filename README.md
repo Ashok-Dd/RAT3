@@ -1,101 +1,153 @@
-# RAT3 — Pre-Installation APK Security Scanner
+# RAT3 — Android RAT / Spyware Defence
 
-RAT3 is an **Android-only** application that statically analyses an `.apk` file **before you install
-it** and produces a risk verdict (`SAFE` / `SUSPICIOUS` / `MALICIOUS`). It is aimed at spotting
-remote-access-trojan (RAT) and spyware behaviour in side-loaded apps.
+RAT3 is an **Android-only** security app with two halves:
 
-All analysis runs **locally and offline**. RAT3 never installs anything silently — the system
-installer dialog is always shown and the user always confirms.
+1. **Pre-installation scanner** — analyse an `.apk` *before* you install it and get a
+   `SAFE` / `SUSPICIOUS` / `MALICIOUS` verdict, ending with a real on-device ML classifier.
+2. **Post-installation monitor** — a persistent background service that watches the live device
+   for remote-access-trojan / spyware behaviour (sensor abuse, data exfiltration, rogue
+   accessibility services, root, sideloaded risky apps) and raises notifications.
 
-> **Important honesty note**
-> Layer 4 is a **rule-weighted heuristic model**, *not* a trained machine-learning classifier.
-> There is no bundled `.pkl` / `.tflite` model and no training dataset in this repo. The heuristic
-> is transparent and tunable (see `android/app/src/main/kotlin/com/example/rat3/scanner/ScannerConfig.kt`
-> and `ml/feature_schema.md`). Training a real classifier is listed under *Future work* below.
+Everything runs **locally and offline**. Installing an APK always goes through the system
+installer dialog — RAT3 never installs anything silently.
+
+> **Honesty notes**
+> - The pre-install ML layer is a real 4-model ensemble (Random Forest, Decision Tree, AdaBoost,
+>   XGBoost) exported from the trained scikit-learn / XGBoost models and evaluated in Kotlin.
+>   The 5th model (Stacking) stays server-only — its KNN base learner needs a SMOTE-resampled
+>   training set that can't be bundled compactly. See `ml/feature_schema.md`.
+> - The monitor needs `QUERY_ALL_PACKAGES` and `PACKAGE_USAGE_STATS` to see other apps. This is a
+>   **sideload / enterprise** posture, not a Play-Store-friendly one.
+> - The "release" build is still debug-signed. A production keystore is future work.
 
 ---
 
-## How it works
+## The app
 
-The user opens an APK (via the in-app file picker, or **"Open with RAT3"** from a file manager).
-The Kotlin native layer builds a single shared `ApkContext` (parsed once) and runs four analysis
-layers, then fuses them into one verdict.
+Five bottom-nav tabs (post-install monitor), with the pre-install scanner folded into the
+**Scanner** tab behind a *Device Monitor / Scan an APK* toggle.
 
-| Layer | Name | What it checks |
-|------:|------|----------------|
-| 1 | **App Safety Analysis** | Declared permissions (dangerous / suspicious), exported components, target/min SDK, accessibility-service abuse, DeviceAdmin receiver |
-| 2 | **Permission–Function Mismatch** | Declared permissions with no matching API in the DEX (over-privilege / obfuscation), plus a small set of always-dangerous APIs (`Runtime.exec`, `DexClassLoader`, `ProcessBuilder`, `ServerSocket`) |
-| 3 | **Malware Signature Check** | Substring / regex signatures, SHA-256 file blocklist, signing-certificate / repackaging check (data in `android/app/src/main/assets/`), obfuscation & network (C2) indicators |
-| 4 | **Heuristic Risk Model** | A 17-feature vector (see `ml/feature_schema.md`) scored by a transparent weighted rule set |
+| Tab | What it shows |
+|-----|---------------|
+| **Dashboard** | Live risk ball, active/critical alert counts, connection count, risk breakdown |
+| **Network** | Per-app upload/download bytes, flagged high-upload apps |
+| **Alerts** | Every finding from all layers, filterable by severity, with notifications |
+| **Scanner** | *Device Monitor*: manual scan, auto-scan interval, layer status, Sensor Scan, Scan All Apps. *Scan an APK*: pick an APK → 4-layer pre-install analysis |
+| **Settings** | Monitoring / notification toggles, **Fix permissions** (re-run onboarding), reset risk score |
 
-**Decision engine** (`DecisionEngine.kt`): `weighted = L1·0.20 + L2·0.20 + L3·0.35 + L4·0.25`,
-with escalation when a real signature/blocklist hit occurs. Thresholds: `<30` SAFE,
-`30–59` SUSPICIOUS, `≥60` MALICIOUS. If a layer fails to analyse, that is stated in the summary and
-its error score cannot by itself force a MALICIOUS verdict.
+A first-run **onboarding** screen requests: notifications, usage access, battery-optimisation
+exemption, and camera/mic/location. Monitoring (and the foreground service) start once onboarding
+finishes; you can skip and grant later.
 
-### Architecture
+### Pre-installation scan — 4 layers
+
+| Layer | Checks |
+|------:|--------|
+| 1 App Safety | dangerous / suspicious permissions, exported components, target SDK, **accessibility-service abuse**, DeviceAdmin |
+| 2 Permission↔Function | permissions declared with no matching API in the DEX; `Runtime.exec` / `DexClassLoader` / `ProcessBuilder` / `ServerSocket` |
+| 3 Signatures & Reputation | substring/regex signatures, **SHA-256 file blocklist**, **signing-cert / repackaging check**, obfuscation & C2 network indicators |
+| 4 ML Malware Classifier | 241-feature TUANDROMD vector → 4-model ensemble → majority vote + mean malware probability |
+
+`DecisionEngine`: `weighted = L1·0.20 + L2·0.20 + L3·0.35 + L4·0.25`; escalate to MALICIOUS on a
+Layer-3 hard hit or a ≥ 4/4 ML "malware" vote. Thresholds: `<30` SAFE, `30–59` SUSPICIOUS, `≥60`
+MALICIOUS.
+
+### Post-installation monitor — 5 layers
+
+Runtime Monitor (CPU / memory / processes / root, 15 s) · Network Monitor (per-app TX deltas,
+C2 indicators, 20 s) · Permission Tracker (sensitive-permission background abuse) · Alert Engine
+(dedup, persistence, notifications) · Risk Engine (60 s — a 65-signal `DeviceFeatures` snapshot
+scored by a weighted rule engine). A native **foreground service** re-runs a self-contained Kotlin
+scan every 5–180 min (default 10), survives app-kill (`START_STICKY`) and reboot (`BootReceiver`).
+
+---
+
+## Architecture
 
 ```
-Flutter UI (lib/)                       Android native (android/.../kotlin/)
-  screens/  splash → home → scanning      MainActivity.kt   ── platform channels
-            → result                        scanner/
-  services/apk_scanner_service.dart           ApkContext.kt        (parse once)
-  services/channels.dart  ─────────────►      Layer1SafetyAnalyzer.kt
-  models/scan_result.dart                     Layer2PermissionMismatch.kt
-  theme/  widgets/                             Layer3SignatureScanner.kt
-                                               Layer4HeuristicModel.kt
-                                               DecisionEngine.kt
+lib/
+  main.dart / _RootGate         onboarding gate → AppShell
+  core/{constants,theme,utils}   one AppTheme (neon-cyber), one risk-colour helper
+  data/
+    models/app_models.dart
+    services/  app_controller (orchestrator) · platform_channel_service ·
+               notification_service · storage_service · app_scanner_service
+  layers/  runtime_monitor · network_monitor · permission_tracker ·
+           alert_engine · risk_engine · feature_engine
+  presentation/  app_shell · onboarding · dashboard · network · alerts ·
+                 scanner (segmented) · sensors · app_scan · settings
+  features/apk_scan/  apk_scan_landing · scanning_screen · result_screen ·
+                      services/{apk_scanner_service,channels} · models/scan_result
+  widgets/  common_widgets (CyberCard, SectionHeader, badges, ScanPulse) · risk_ball
+
+android/app/src/main/kotlin/com/example/rat3/
+  MainActivity.kt          five channels: /security (monitor) + /scanner /file /install /progress
+  ScanForegroundService.kt · ScanAlarmReceiver.kt · BootReceiver.kt
+  scanner/  ApkContext (parse once) · Layer1-3 · Layer4MlClassifier · DecisionEngine ·
+            Signatures · Reputation · ScannerConfig · ScannerUtils · ml/{MlModels,TuandromdFeatures}
+android/app/src/main/assets/
+  signatures.json · blocklist.json · trusted_certs.json · ml/*.json (exported models)
+
+ml/   Flask app (app.py) + training scripts (*Model.py) + trained .pkl + TUANDROMD.csv
+      export_models_for_android.py  →  assets/ml/*.json  +  parity_samples.json
 ```
 
-Channels (names shared in `lib/services/channels.dart` and `MainActivity.kt`):
-`…/scanner` (scanApk), `…/file` (pickApkFile, getInitialApkPath, onIncomingApk),
-`…/install` (installApk), `…/progress` (EventChannel, per-layer progress).
+Platform channels (names shared in `lib/features/apk_scan/services/channels.dart` &
+`lib/data/services/platform_channel_service.dart` ↔ `MainActivity.kt`).
 
 ---
 
 ## Build & run
 
-Requirements: Flutter 3.38+ / Dart 3.10+, JDK 17, Android SDK, an Android device or emulator
-(minSdk 24).
+Requirements: Flutter 3.38+ / Dart 3.10+, JDK 17, Android SDK (compileSdk 36), an Android device
+or emulator (minSdk 24).
 
 ```bash
 flutter pub get
-flutter analyze          # expect: no issues
-flutter test             # Dart unit + smoke tests
-(cd android && ./gradlew testDebugUnitTest)   # Kotlin unit tests
+flutter analyze                       # 0 issues
+flutter test                          # Dart tests
+(cd android && ./gradlew :app:testDebugUnitTest)   # Kotlin tests (incl. ML parity)
 flutter build apk --debug
 ```
 
-### Run on a physical phone
+### On a physical phone
 
-1. On the phone: **Settings → About phone →** tap *Build number* 7× to unlock **Developer options**,
-   then enable **USB debugging**.
-2. Connect by USB and accept the "Allow USB debugging" prompt.
-3. `flutter devices` — the phone should be listed.
-4. `flutter run` (hot-reload dev session) **or** `flutter install` (install the debug APK and launch
-   manually).
-5. First time you install a scanned APK, Android asks you to allow "install unknown apps" for RAT3 —
-   grant it and retry.
+1. Phone: **Settings → About phone →** tap *Build number* 7×, then enable **USB debugging**.
+2. Plug in, accept the prompt. `flutter devices` should list it.
+3. `flutter run` (or `flutter install`).
+4. Complete onboarding — grant notifications, **usage access** (opens a settings page),
+   battery exemption, camera/mic.
+5. The foreground-service notification appears and monitoring begins.
+
+### Regenerating the ML assets
+
+```bash
+pip install scikit-learn==1.6.1 xgboost joblib numpy pandas
+cd ml && python export_models_for_android.py
+```
+
+### The Flask research tool (optional, not part of the app)
+
+```bash
+cd ml && pip install -r requirements.txt && python app.py    # http://localhost:5000
+```
+Upload an APK to run all **five** models (Stacking included) server-side.
 
 ---
 
-## Repository layout
+## Tests
 
-```
-lib/                             Flutter app (see Architecture)
-android/app/src/main/kotlin/     Android host + Kotlin scanner
-android/app/src/main/assets/     signatures.json, blocklist.json, trusted_certs.json
-android/app/src/test/kotlin/     Kotlin unit tests
-ml/                              feature schema + (non-production) training scaffold
-test/                            Dart tests
-```
+- `test/scan_result_parsing_test.dart` — channel JSON parsing
+- `test/widget_test.dart` — shared-widget + theme smoke test
+- `android/.../DecisionEngineTest.kt`, `ScannerUtilsTest.kt` — verdict math, JSON schema
+- `android/.../ml/MlEnsembleParityTest.kt` — Kotlin ML evaluators vs the Python models (±2.5 %)
 
 ---
 
-## Future work (out of scope for this build)
+## Future work
 
-- Replace the Layer 4 heuristic with a **trained** classifier (dataset e.g. CICMalDroid-2020 /
-  Drebin / MalRadar; on-device inference via TensorFlow Lite).
-- Live feeds for the SHA-256 blocklist and certificate reputation.
-- Production release signing (keystore + `key.properties`) and R8/shrinking.
-- Dynamic / behavioural analysis (this build is purely static).
+- Port Stacking on-device (quantised KNN matrix) or retrain a single strong model.
+- Retrain on a fresher corpus (AndroZoo + VirusTotal); TUANDROMD is dated.
+- Real DEX parser for feature extraction (currently a string scan).
+- Production release keystore + R8; live blocklist / cert-reputation feeds.
+- Play-compliant package-visibility instead of `QUERY_ALL_PACKAGES`.
