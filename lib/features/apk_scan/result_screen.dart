@@ -56,7 +56,11 @@ class ApkResultScreen extends StatelessWidget {
       padding: const EdgeInsets.all(24),
       child: Column(
         children: [
-          Icon(_isSafe ? Icons.verified_user : Icons.gpp_bad, size: 56, color: _verdictColor),
+          Icon(
+            _isSafe ? Icons.verified_user : Icons.gpp_bad,
+            size: 56,
+            color: _verdictColor,
+          ),
           const SizedBox(height: 12),
           Text(
             result.verdict,
@@ -134,7 +138,11 @@ class ApkResultScreen extends StatelessWidget {
           borderColor: AppTheme.neonRed.withValues(alpha: 0.4),
           child: Row(
             children: [
-              const Icon(Icons.warning_amber, color: AppTheme.neonRed, size: 20),
+              const Icon(
+                Icons.warning_amber,
+                color: AppTheme.neonRed,
+                size: 20,
+              ),
               const SizedBox(width: 10),
               Expanded(
                 child: Text(
@@ -151,8 +159,13 @@ class ApkResultScreen extends StatelessWidget {
           child: OutlinedButton.icon(
             onPressed: () => _confirmRiskyInstall(context),
             icon: const Icon(Icons.warning_amber, color: AppTheme.neonRed),
-            label: const Text('INSTALL ANYWAY (RISK)', style: TextStyle(color: AppTheme.neonRed)),
-            style: OutlinedButton.styleFrom(side: const BorderSide(color: AppTheme.neonRed)),
+            label: const Text(
+              'INSTALL ANYWAY (RISK)',
+              style: TextStyle(color: AppTheme.neonRed),
+            ),
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: AppTheme.neonRed),
+            ),
           ),
         ),
         const SizedBox(height: 8),
@@ -179,8 +192,14 @@ class ApkResultScreen extends StatelessWidget {
           style: AppTheme.bodyMedium,
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Install')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Install'),
+          ),
         ],
       ),
     );
@@ -204,7 +223,10 @@ class ApkResultScreen extends StatelessWidget {
           style: AppTheme.bodyMedium,
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: ElevatedButton.styleFrom(backgroundColor: AppTheme.neonRed),
@@ -229,7 +251,11 @@ class ApkResultScreen extends StatelessWidget {
 }
 
 class _LayerTile extends StatelessWidget {
-  const _LayerTile({required this.title, required this.icon, required this.layer});
+  const _LayerTile({
+    required this.title,
+    required this.icon,
+    required this.layer,
+  });
 
   final String title;
   final IconData icon;
@@ -251,7 +277,10 @@ class _LayerTile extends StatelessWidget {
           tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
           childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
           leading: Icon(icon, color: AppTheme.neonCyan, size: 20),
-          title: Text(title, style: AppTheme.bodyLarge.copyWith(fontWeight: FontWeight.w600)),
+          title: Text(
+            title,
+            style: AppTheme.bodyLarge.copyWith(fontWeight: FontWeight.w600),
+          ),
           trailing: Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
             decoration: BoxDecoration(
@@ -260,14 +289,24 @@ class _LayerTile extends StatelessWidget {
             ),
             child: Text(
               '${layer.riskScore}',
-              style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 13),
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+              ),
             ),
           ),
           children: [
             const NeonDivider(),
             const SizedBox(height: 8),
             if (layer.analysisError)
-              _finding(const Finding(message: 'This layer could not complete — findings are partial.', isWarning: true)),
+              _finding(
+                const Finding(
+                  message:
+                      'This layer could not complete — findings are partial.',
+                  isWarning: true,
+                ),
+              ),
             ...layer.findings.map(_finding),
           ],
         ),

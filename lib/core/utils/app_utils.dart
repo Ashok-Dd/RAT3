@@ -14,8 +14,18 @@ class AppLogger {
     developer.log('[WARN] $message', name: tag);
   }
 
-  static void error(String tag, String message, [Object? error, StackTrace? stack]) {
-    developer.log('[ERROR] $message', name: tag, error: error, stackTrace: stack);
+  static void error(
+    String tag,
+    String message, [
+    Object? error,
+    StackTrace? stack,
+  ]) {
+    developer.log(
+      '[ERROR] $message',
+      name: tag,
+      error: error,
+      stackTrace: stack,
+    );
   }
 }
 

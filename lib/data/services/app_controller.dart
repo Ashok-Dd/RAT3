@@ -20,16 +20,16 @@ class AppController extends ChangeNotifier {
   static const String _tag = 'AppController';
 
   // ── Services ───────────────────────────────────────────────────────────────
-  final StorageService storageService         = StorageService();
+  final StorageService storageService = StorageService();
   final NotificationService notificationService = NotificationService();
-  final PlatformChannelService platformService  = PlatformChannelService();
+  final PlatformChannelService platformService = PlatformChannelService();
 
   // ── Layers ─────────────────────────────────────────────────────────────────
-  late final RuntimeMonitor    runtimeMonitor;
-  late final NetworkMonitor    networkMonitor;
+  late final RuntimeMonitor runtimeMonitor;
+  late final NetworkMonitor networkMonitor;
   late final PermissionTracker permissionTracker;
-  late final AlertEngine       alertEngine;
-  late final RiskEngine        riskEngine;
+  late final AlertEngine alertEngine;
+  late final RiskEngine riskEngine;
 
   // ── State ──────────────────────────────────────────────────────────────────
   RiskScore _riskScore = RiskScore.initial;
@@ -50,7 +50,8 @@ class AppController extends ChangeNotifier {
   DateTime? _lastScanTime;
   DateTime? get lastScanTime => _lastScanTime;
 
-  int _scanIntervalMinutes = AppConstants.defaultScanInterval; // loaded from storage in init()
+  int _scanIntervalMinutes =
+      AppConstants.defaultScanInterval; // loaded from storage in init()
   int get scanIntervalMinutes => _scanIntervalMinutes;
 
   bool _onboardingComplete = false;
@@ -63,19 +64,19 @@ class AppController extends ChangeNotifier {
 
   Future<void> init() async {
     try {
-      AppLogger.info(_tag, 'Initializing RAT-Prevention (real data mode)…');
+      AppLogger.info(_tag, 'Initializing RAT3 (real data mode)…');
 
       await storageService.init();
       await notificationService.init();
 
       _scanIntervalMinutes = storageService.loadScanInterval();
-      _lastScanTime        = storageService.loadLastScanTime();
+      _lastScanTime = storageService.loadLastScanTime();
       _isMonitoringEnabled = storageService.loadMonitoringEnabled();
-      _onboardingComplete  = storageService.loadOnboardingComplete();
+      _onboardingComplete = storageService.loadOnboardingComplete();
 
       // Inject real PlatformChannelService into every layer
-      runtimeMonitor    = RuntimeMonitor(platform: platformService);
-      networkMonitor    = NetworkMonitor(platform: platformService);
+      runtimeMonitor = RuntimeMonitor(platform: platformService);
+      networkMonitor = NetworkMonitor(platform: platformService);
       permissionTracker = PermissionTracker(platform: platformService);
 
       alertEngine = AlertEngine(
@@ -84,10 +85,10 @@ class AppController extends ChangeNotifier {
       );
 
       riskEngine = RiskEngine(
-        platform:       platformService,
+        platform: platformService,
         networkMonitor: networkMonitor,
         storageService: storageService,
-        alertEngine:    alertEngine,
+        alertEngine: alertEngine,
       );
 
       // Wire all layer alert streams into the central Alert Engine
@@ -123,8 +124,12 @@ class AppController extends ChangeNotifier {
     // Start the native Android ForegroundService so scanning continues
     // even when the Flutter app is closed or swiped from recents.
     platformService.startForegroundService(
-        intervalMinutes: _scanIntervalMinutes);
-    AppLogger.info(_tag, 'All monitoring layers started (foreground service running)');
+      intervalMinutes: _scanIntervalMinutes,
+    );
+    AppLogger.info(
+      _tag,
+      'All monitoring layers started (foreground service running)',
+    );
     // Auto-scan immediately on startup so the dashboard never shows 0.
     // Small delay lets all layers fully initialise before the first scan.
     Future.delayed(const Duration(seconds: 2), () {
@@ -140,7 +145,10 @@ class AppController extends ChangeNotifier {
     // Stop the native foreground service
     platformService.stopForegroundService();
     notificationService.cancelAll();
-    AppLogger.info(_tag, 'All monitoring layers stopped (foreground service stopped)');
+    AppLogger.info(
+      _tag,
+      'All monitoring layers stopped (foreground service stopped)',
+    );
   }
 
   Future<void> setMonitoringEnabled(bool enabled) async {
@@ -158,8 +166,7 @@ class AppController extends ChangeNotifier {
       Duration(minutes: _scanIntervalMinutes),
       (_) => performScan(),
     );
-    AppLogger.info(_tag,
-        'Auto-scan scheduled every $_scanIntervalMinutes min');
+    AppLogger.info(_tag, 'Auto-scan scheduled every $_scanIntervalMinutes min');
   }
 
   Future<void> setScanInterval(int minutes) async {
@@ -200,8 +207,8 @@ class AppController extends ChangeNotifier {
         permissionTracker.performScan(),
       ]);
 
-      final runtimeEvents   = results[0] as List<RuntimeEvent>;
-      final netConnections  = results[1] as List<NetworkConnection>;
+      final runtimeEvents = results[0] as List<RuntimeEvent>;
+      final netConnections = results[1] as List<NetworkConnection>;
       // Permission results already emit their own alerts internally
 
       // Update connection list (newest first, bounded to 100)
@@ -216,10 +223,12 @@ class AppController extends ChangeNotifier {
       _lastScanTime = DateTime.now();
       await storageService.saveLastScanTime(_lastScanTime!);
 
-      AppLogger.info(_tag,
-          'Real scan complete. '
-          'Runtime events: ${runtimeEvents.length} | '
-          'Connections: ${netConnections.length}');
+      AppLogger.info(
+        _tag,
+        'Real scan complete. '
+        'Runtime events: ${runtimeEvents.length} | '
+        'Connections: ${netConnections.length}',
+      );
     } catch (e, st) {
       AppLogger.error(_tag, 'performScan error', e, st);
     } finally {
@@ -249,8 +258,8 @@ class AppController extends ChangeNotifier {
 
   Future<void> resetRiskScore() async {
     await storageService.resetAll();
-    _riskScore   = RiskScore.initial;
-    _alerts      = [];
+    _riskScore = RiskScore.initial;
+    _alerts = [];
     _connections = [];
     notifyListeners();
     AppLogger.info(_tag, 'Risk score reset');
@@ -276,7 +285,9 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
-    for (final s in _subs) s.cancel();
+    for (final s in _subs) {
+      s.cancel();
+    }
     _stopMonitoring();
     alertEngine.dispose();
     runtimeMonitor.dispose();

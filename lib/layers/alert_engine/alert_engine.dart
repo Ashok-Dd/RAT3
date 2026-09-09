@@ -50,16 +50,16 @@ class AlertEngine {
   // Cooldown per severity (minutes)
   static const Map<AlertSeverity, int> _cooldownMinutes = {
     AlertSeverity.critical: 30,
-    AlertSeverity.high:     20,
-    AlertSeverity.medium:   10,
-    AlertSeverity.low:       5,
+    AlertSeverity.high: 20,
+    AlertSeverity.medium: 10,
+    AlertSeverity.low: 5,
   };
 
   AlertEngine({
     required NotificationService notificationService,
     required StorageService storageService,
-  })  : _notificationService = notificationService,
-        _storageService = storageService;
+  }) : _notificationService = notificationService,
+       _storageService = storageService;
 
   void init() {
     _alerts.addAll(_storageService.loadAlerts());
@@ -68,8 +68,10 @@ class AlertEngine {
     for (final a in _alerts) {
       _seenIds.add(a.id);
     }
-    AppLogger.info(_tag,
-        'Alert engine initialized — ${_alerts.length} stored, ${_seenIds.length} known IDs');
+    AppLogger.info(
+      _tag,
+      'Alert engine initialized — ${_alerts.length} stored, ${_seenIds.length} known IDs',
+    );
   }
 
   void subscribeToLayer(Stream<AlertEvent> layerAlerts) {
@@ -89,8 +91,9 @@ class AlertEngine {
     _alerts.removeWhere((a) => a.source == 'App Scanner');
 
     // Clear app scan IDs from seenIds so new scan results always show
-    _seenIds.removeWhere((id) =>
-        id.startsWith('appscan_') || id.startsWith('appscan_'));
+    _seenIds.removeWhere(
+      (id) => id.startsWith('appscan_') || id.startsWith('appscan_'),
+    );
 
     // Inject each new alert through normal dedup pipeline
     for (final alert in alerts) {
@@ -111,10 +114,11 @@ class AlertEngine {
     // ── Tier 2: Title + cooldown dedup ────────────────────────────────────
     final cooldown = _cooldownMinutes[alert.severity] ?? 10;
     final lastSeen = _titleLastSeen[alert.title];
-    if (lastSeen != null &&
-        now.difference(lastSeen).inMinutes < cooldown) {
-      AppLogger.info(_tag,
-          'Suppressed [cooldown ${cooldown}min]: ${alert.title}');
+    if (lastSeen != null && now.difference(lastSeen).inMinutes < cooldown) {
+      AppLogger.info(
+        _tag,
+        'Suppressed [cooldown ${cooldown}min]: ${alert.title}',
+      );
       return;
     }
 
@@ -129,8 +133,10 @@ class AlertEngine {
 
     _storageService.saveAlerts(_alerts.take(100).toList());
 
-    AppLogger.info(_tag,
-        'Alert accepted [${alert.severity.label}]: ${alert.title}');
+    AppLogger.info(
+      _tag,
+      'Alert accepted [${alert.severity.label}]: ${alert.title}',
+    );
 
     if (!_alertsController.isClosed) {
       _alertsController.add(List.unmodifiable(_alerts));
@@ -162,8 +168,9 @@ class AlertEngine {
   /// in _seenIds so they never repeat every scan — user sees them once.
   Future<void> resetForNewScan() async {
     // Remove only app-scan alerts from the visible list
-    _alerts.removeWhere((a) =>
-        a.source == 'App Scanner' || a.id.startsWith('appscan_'));
+    _alerts.removeWhere(
+      (a) => a.source == 'App Scanner' || a.id.startsWith('appscan_'),
+    );
 
     // Clear only app-scan IDs — persistent device-state IDs stay
     _seenIds.removeWhere((id) => id.startsWith('appscan_'));
@@ -172,30 +179,37 @@ class AlertEngine {
     _titleLastSeen.removeWhere((title, _) {
       final t = title.toLowerCase();
       return t.contains('suspicious') ||
-             t.contains('malicious') ||
-             t.contains('package') ||
-             t.contains('permission risk') ||
-             t.contains('app scan');
+          t.contains('malicious') ||
+          t.contains('package') ||
+          t.contains('permission risk') ||
+          t.contains('app scan');
     });
 
     await _storageService.saveAlerts(_alerts.take(100).toList());
     if (!_alertsController.isClosed) {
       _alertsController.add(List.unmodifiable(_alerts));
     }
-    AppLogger.info(_tag, 'Scan reset — app alerts cleared, device alerts preserved');
+    AppLogger.info(
+      _tag,
+      'Scan reset — app alerts cleared, device alerts preserved',
+    );
   }
 
   List<AlertEvent> getAlertsBySeverity(AlertSeverity severity) =>
       _alerts.where((a) => a.severity == severity).toList();
 
   int get criticalCount => _alerts
-      .where((a) =>
-          a.severity == AlertSeverity.critical ||
-          a.severity == AlertSeverity.high)
+      .where(
+        (a) =>
+            a.severity == AlertSeverity.critical ||
+            a.severity == AlertSeverity.high,
+      )
       .length;
 
   void dispose() {
-    for (final sub in _subscriptions) sub.cancel();
+    for (final sub in _subscriptions) {
+      sub.cancel();
+    }
     _alertsController.close();
   }
 }

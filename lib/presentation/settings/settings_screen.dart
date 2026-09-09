@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:rat3/core/theme/app_theme.dart';
 import 'package:rat3/data/services/app_controller.dart';
+import 'package:rat3/presentation/onboarding/onboarding_screen.dart';
 import 'package:rat3/widgets/common_widgets.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -40,10 +41,27 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 24),
+          const SectionHeader(title: 'Permissions'),
+          const SizedBox(height: 12),
+          CyberCard(
+            child: _ActionTile(
+              label: 'Fix permissions',
+              sublabel:
+                  'Re-run the setup wizard for usage access, notifications…',
+              icon: Icons.tune,
+              color: AppTheme.neonCyan,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const OnboardingScreen(),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
           const SectionHeader(title: 'Risk Score'),
           const SizedBox(height: 12),
           CyberCard(
-            borderColor: AppTheme.neonRed.withOpacity(0.2),
+            borderColor: AppTheme.neonRed.withValues(alpha: 0.2),
             child: _ActionTile(
               label: 'Reset Risk Score',
               sublabel: 'Clear all data and start fresh',
@@ -59,13 +77,13 @@ class SettingsScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _InfoRow(label: 'App', value: 'RAT-Prevention'),
+                _InfoRow(label: 'App', value: 'RAT3'),
                 const NeonDivider(),
                 _InfoRow(label: 'Version', value: '1.0.0'),
                 const NeonDivider(),
                 _InfoRow(label: 'Platform', value: 'Flutter / Android'),
                 const NeonDivider(),
-                _InfoRow(label: 'Build', value: 'Production'),
+                _InfoRow(label: 'Build', value: 'Debug build'),
               ],
             ),
           ),
@@ -99,14 +117,19 @@ class SettingsScreen extends StatelessWidget {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text('Cancel',
-                style: AppTheme.bodyMedium
-                    .copyWith(color: AppTheme.textSecondary)),
+            child: Text(
+              'Cancel',
+              style: AppTheme.bodyMedium.copyWith(
+                color: AppTheme.textSecondary,
+              ),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text('Reset',
-                style: AppTheme.bodyMedium.copyWith(color: AppTheme.neonRed)),
+            child: Text(
+              'Reset',
+              style: AppTheme.bodyMedium.copyWith(color: AppTheme.neonRed),
+            ),
           ),
         ],
       ),
@@ -156,7 +179,7 @@ class _ToggleTile extends StatelessWidget {
           Switch(
             value: value,
             onChanged: onChanged,
-            activeColor: activeColor,
+            activeThumbColor: activeColor,
           ),
         ],
       ),
@@ -217,9 +240,10 @@ class _InfoRow extends StatelessWidget {
         children: [
           Text(label, style: AppTheme.bodyMedium),
           const Spacer(),
-          Text(value,
-              style:
-                  AppTheme.bodyLarge.copyWith(color: AppTheme.neonGreen)),
+          Text(
+            value,
+            style: AppTheme.bodyLarge.copyWith(color: AppTheme.neonGreen),
+          ),
         ],
       ),
     );

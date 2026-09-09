@@ -33,10 +33,26 @@ class _ApkScanningScreenState extends State<ApkScanningScreen> {
 
   final _service = ApkScannerService();
   final _layers = [
-    _Layer(name: 'App Safety Analysis', description: 'Manifest, permissions, SDK, accessibility…', icon: Icons.rule),
-    _Layer(name: 'Permission Mismatch', description: 'Mapping permissions to API usage…', icon: Icons.compare_arrows),
-    _Layer(name: 'Malware Signatures', description: 'Signatures, blocklist, signing check…', icon: Icons.fingerprint),
-    _Layer(name: 'ML Malware Classifier', description: 'Running the 5-model ensemble…', icon: Icons.psychology),
+    _Layer(
+      name: 'App Safety Analysis',
+      description: 'Manifest, permissions, SDK, accessibility…',
+      icon: Icons.rule,
+    ),
+    _Layer(
+      name: 'Permission Mismatch',
+      description: 'Mapping permissions to API usage…',
+      icon: Icons.compare_arrows,
+    ),
+    _Layer(
+      name: 'Malware Signatures',
+      description: 'Signatures, blocklist, signing check…',
+      icon: Icons.fingerprint,
+    ),
+    _Layer(
+      name: 'ML Malware Classifier',
+      description: 'Running the 5-model ensemble…',
+      icon: Icons.psychology,
+    ),
   ];
 
   bool _complete = false;
@@ -70,11 +86,16 @@ class _ApkScanningScreenState extends State<ApkScanningScreen> {
       await Future<void>.delayed(const Duration(milliseconds: 600));
       if (!mounted) return;
       await Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(builder: (_) => ApkResultScreen(result: result)),
+        MaterialPageRoute<void>(
+          builder: (_) => ApkResultScreen(result: result),
+        ),
       );
     } on TimeoutException {
       if (mounted) {
-        setState(() => _error = 'The scan timed out. The APK may be very large or damaged.');
+        setState(
+          () => _error =
+              'The scan timed out. The APK may be very large or damaged.',
+        );
       }
     } catch (e) {
       if (mounted) setState(() => _error = _readableError(e));
@@ -83,8 +104,12 @@ class _ApkScanningScreenState extends State<ApkScanningScreen> {
 
   String _readableError(Object e) {
     final text = e.toString();
-    if (text.contains('Not a valid APK')) return 'That file is not a valid APK.';
-    if (text.contains('APK not found')) return 'The APK file could not be found.';
+    if (text.contains('Not a valid APK')) {
+      return 'That file is not a valid APK.';
+    }
+    if (text.contains('APK not found')) {
+      return 'The APK file could not be found.';
+    }
     return 'Scan failed: $text';
   }
 
@@ -151,18 +176,27 @@ class _ApkScanningScreenState extends State<ApkScanningScreen> {
           child: Row(
             children: [
               if (_complete)
-                const Icon(Icons.check_circle, color: AppTheme.neonGreen, size: 16)
+                const Icon(
+                  Icons.check_circle,
+                  color: AppTheme.neonGreen,
+                  size: 16,
+                )
               else
                 const SizedBox(
                   width: 16,
                   height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.neonGreen),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: AppTheme.neonGreen,
+                  ),
                 ),
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   _complete ? 'Analysis complete' : _status,
-                  style: AppTheme.bodyMedium.copyWith(color: AppTheme.textPrimary),
+                  style: AppTheme.bodyMedium.copyWith(
+                    color: AppTheme.textPrimary,
+                  ),
                 ),
               ),
             ],
@@ -179,11 +213,7 @@ class _ApkScanningScreenState extends State<ApkScanningScreen> {
         children: [
           const Icon(Icons.error_outline, size: 56, color: AppTheme.neonRed),
           const SizedBox(height: 16),
-          Text(
-            _error!,
-            textAlign: TextAlign.center,
-            style: AppTheme.bodyLarge,
-          ),
+          Text(_error!, textAlign: TextAlign.center, style: AppTheme.bodyLarge),
           const SizedBox(height: 28),
           SizedBox(
             width: double.infinity,
@@ -207,14 +237,21 @@ class _ApkScanningScreenState extends State<ApkScanningScreen> {
     final (border, statusWidget) = switch (layer.state) {
       _LayerState.waiting => (
         AppTheme.borderColor,
-        const Icon(Icons.radio_button_unchecked, color: AppTheme.textMuted, size: 20),
+        const Icon(
+          Icons.radio_button_unchecked,
+          color: AppTheme.textMuted,
+          size: 20,
+        ),
       ),
       _LayerState.scanning => (
         AppTheme.neonGreen,
         const SizedBox(
           width: 20,
           height: 20,
-          child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.neonGreen),
+          child: CircularProgressIndicator(
+            strokeWidth: 2,
+            color: AppTheme.neonGreen,
+          ),
         ),
       ),
       _LayerState.complete => (

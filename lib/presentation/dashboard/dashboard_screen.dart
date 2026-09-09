@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/core/theme/app_theme.dart';
 import 'package:rat3/core/utils/app_utils.dart';
 import 'package:rat3/data/models/app_models.dart';
 import 'package:rat3/data/services/app_controller.dart';
 import 'package:rat3/widgets/common_widgets.dart';
 import 'package:rat3/widgets/risk_ball.dart';
-import 'package:rat3/core/constants/app_constants.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -45,10 +45,13 @@ class DashboardScreen extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('RAT-PREVENTION', style: AppTheme.headlineLarge.copyWith(
-              color: AppTheme.neonGreen,
-              fontSize: 20,
-            )),
+            Text(
+              'RAT-PREVENTION',
+              style: AppTheme.headlineLarge.copyWith(
+                color: AppTheme.neonGreen,
+                fontSize: 20,
+              ),
+            ),
             Text('POST-INSTALLATION MONITOR', style: AppTheme.labelSmall),
           ],
         ),
@@ -82,7 +85,7 @@ class DashboardScreen extends StatelessWidget {
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: score.score.riskColor.withOpacity(0.1),
+                      color: score.score.riskColor.withValues(alpha: 0.1),
                       blurRadius: 40,
                       spreadRadius: 10,
                     ),
@@ -109,7 +112,7 @@ class DashboardScreen extends StatelessWidget {
       children: [
         Expanded(
           child: CyberCard(
-            borderColor: AppTheme.neonGreen.withOpacity(0.3),
+            borderColor: AppTheme.neonGreen.withValues(alpha: 0.3),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -130,7 +133,7 @@ class DashboardScreen extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: CyberCard(
-            borderColor: AppTheme.neonCyan.withOpacity(0.3),
+            borderColor: AppTheme.neonCyan.withValues(alpha: 0.3),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -151,7 +154,7 @@ class DashboardScreen extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: CyberCard(
-            borderColor: AppTheme.neonBlue.withOpacity(0.3),
+            borderColor: AppTheme.neonBlue.withValues(alpha: 0.3),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -178,11 +181,23 @@ class DashboardScreen extends StatelessWidget {
         children: [
           const SectionHeader(title: 'Risk Breakdown'),
           const SizedBox(height: 16),
-          _buildContribRow('Runtime Behavior', score.runtimeContribution, AppTheme.neonCyan),
+          _buildContribRow(
+            'Runtime Behavior',
+            score.runtimeContribution,
+            AppTheme.neonCyan,
+          ),
           const SizedBox(height: 10),
-          _buildContribRow('Network Traffic', score.networkContribution, AppTheme.neonOrange),
+          _buildContribRow(
+            'Network Traffic',
+            score.networkContribution,
+            AppTheme.neonOrange,
+          ),
           const SizedBox(height: 10),
-          _buildContribRow('Permission Abuse', score.permissionContribution, AppTheme.neonRed),
+          _buildContribRow(
+            'Permission Abuse',
+            score.permissionContribution,
+            AppTheme.neonRed,
+          ),
         ],
       ),
     );
@@ -235,30 +250,32 @@ class DashboardScreen extends StatelessWidget {
       children: [
         const SectionHeader(title: 'Recent Alerts'),
         const SizedBox(height: 12),
-        ...recent.map((a) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: CyberCard(
-                borderColor: _severityColor(a.severity).withOpacity(0.3),
-                child: Row(
-                  children: [
-                    SeverityBadge(severity: a.severity),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(a.title, style: AppTheme.bodyLarge),
-                          Text(
-                            AppFormatter.formatTimeAgo(a.timestamp),
-                            style: AppTheme.labelSmall,
-                          ),
-                        ],
-                      ),
+        ...recent.map(
+          (a) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: CyberCard(
+              borderColor: _severityColor(a.severity).withValues(alpha: 0.3),
+              child: Row(
+                children: [
+                  SeverityBadge(severity: a.severity),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(a.title, style: AppTheme.bodyLarge),
+                        Text(
+                          AppFormatter.formatTimeAgo(a.timestamp),
+                          style: AppTheme.labelSmall,
+                        ),
+                      ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
-            )),
+            ),
+          ),
+        ),
       ],
     );
   }

@@ -9,8 +9,9 @@ import 'package:rat3/core/utils/app_utils.dart';
 class PlatformChannelService {
   static const String _tag = 'PlatformChannelService';
 
-  static const MethodChannel _channel =
-      MethodChannel('com.example.rat3/security');
+  static const MethodChannel _channel = MethodChannel(
+    'com.example.rat3/security',
+  );
 
   // ── CPU ────────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,9 @@ class PlatformChannelService {
   /// Returns {totalRam, availableRam, lowMemory, threshold} from ActivityManager.
   Future<Map<String, dynamic>> getMemoryInfo() async {
     try {
-      final result = await _channel.invokeMapMethod<String, dynamic>('getMemoryInfo');
+      final result = await _channel.invokeMapMethod<String, dynamic>(
+        'getMemoryInfo',
+      );
       return result ?? {};
     } on PlatformException catch (e) {
       AppLogger.error(_tag, 'getMemoryInfo failed: ${e.message}');
@@ -48,7 +51,9 @@ class PlatformChannelService {
   /// Each entry: {localAddress, remoteAddress, state, uid, source}
   Future<List<Map<String, dynamic>>> getNetworkConnections() async {
     try {
-      final result = await _channel.invokeListMethod<dynamic>('getNetworkConnections');
+      final result = await _channel.invokeListMethod<dynamic>(
+        'getNetworkConnections',
+      );
       if (result == null) return [];
       return result
           .whereType<Map>()
@@ -66,7 +71,9 @@ class PlatformChannelService {
   /// Values are -1 if TrafficStats reports UNSUPPORTED.
   Future<Map<String, dynamic>> getNetworkDataUsage() async {
     try {
-      final result = await _channel.invokeMapMethod<String, dynamic>('getNetworkDataUsage');
+      final result = await _channel.invokeMapMethod<String, dynamic>(
+        'getNetworkDataUsage',
+      );
       return result ?? {};
     } on PlatformException catch (e) {
       AppLogger.error(_tag, 'getNetworkDataUsage failed: ${e.message}');
@@ -80,7 +87,9 @@ class PlatformChannelService {
   /// Each entry: {pid, processName, importance, importanceReasonCode, pkgList}
   Future<List<Map<String, dynamic>>> getRunningProcesses() async {
     try {
-      final result = await _channel.invokeListMethod<dynamic>('getRunningProcesses');
+      final result = await _channel.invokeListMethod<dynamic>(
+        'getRunningProcesses',
+      );
       if (result == null) return [];
       return result
           .whereType<Map>()
@@ -117,7 +126,9 @@ class PlatformChannelService {
   /// Returns real battery info from ACTION_BATTERY_CHANGED broadcast.
   Future<Map<String, dynamic>> getBatteryInfo() async {
     try {
-      final result = await _channel.invokeMapMethod<String, dynamic>('getBatteryInfo');
+      final result = await _channel.invokeMapMethod<String, dynamic>(
+        'getBatteryInfo',
+      );
       return result ?? {};
     } on PlatformException catch (e) {
       AppLogger.error(_tag, 'getBatteryInfo failed: ${e.message}');
@@ -132,7 +143,9 @@ class PlatformChannelService {
   ///       isIgnoringBatteryOptimizations, hasUsageStatsPermission
   Future<Map<String, dynamic>> getSecurityFlags() async {
     try {
-      final result = await _channel.invokeMapMethod<String, dynamic>('getSecurityFlags');
+      final result = await _channel.invokeMapMethod<String, dynamic>(
+        'getSecurityFlags',
+      );
       return result ?? {};
     } on PlatformException catch (e) {
       AppLogger.error(_tag, 'getSecurityFlags failed: ${e.message}');
@@ -144,7 +157,9 @@ class PlatformChannelService {
 
   Future<List<Map<String, dynamic>>> getInstalledApps() async {
     try {
-      final result = await _channel.invokeListMethod<dynamic>('getInstalledApps');
+      final result = await _channel.invokeListMethod<dynamic>(
+        'getInstalledApps',
+      );
       if (result == null) return [];
       return result
           .whereType<Map>()
@@ -161,7 +176,8 @@ class PlatformChannelService {
   Future<bool> requestBatteryOptimizationExemption() async {
     try {
       return await _channel.invokeMethod<bool>(
-              'requestBatteryOptimizationExemption') ??
+            'requestBatteryOptimizationExemption',
+          ) ??
           false;
     } catch (e) {
       AppLogger.error(_tag, 'requestBatteryOptimizationExemption failed', e);
@@ -192,7 +208,9 @@ class PlatformChannelService {
   /// Returns all hardware sensors available on device from SensorManager.
   Future<List<Map<String, dynamic>>> getActiveSensors() async {
     try {
-      final result = await _channel.invokeListMethod<dynamic>('getActiveSensors');
+      final result = await _channel.invokeListMethod<dynamic>(
+        'getActiveSensors',
+      );
       if (result == null) return [];
       return result
           .whereType<Map>()
@@ -209,7 +227,9 @@ class PlatformChannelService {
   /// Real TX/RX bytes per app via TrafficStats UID mapping.
   Future<List<Map<String, dynamic>>> getAppNetworkUsage() async {
     try {
-      final result = await _channel.invokeListMethod<dynamic>('getAppNetworkUsage');
+      final result = await _channel.invokeListMethod<dynamic>(
+        'getAppNetworkUsage',
+      );
       if (result == null) return [];
       return result
           .whereType<Map>()
@@ -326,7 +346,7 @@ class PlatformChannelService {
     }
   }
 
-   // ── New Strengthened Detection Methods ─────────────────────────────────────
+  // ── New Strengthened Detection Methods ─────────────────────────────────────
 
   /// Real active accessibility services — actually ENABLED by user in Settings.
   /// Returns list of {packageName, appName, serviceName, isSystemApp, capabilities}
@@ -336,19 +356,26 @@ class PlatformChannelService {
         'getActiveAccessibilityServices',
       );
       if (result == null) return [];
-      return result.whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e)).toList();
+      return result
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
     } on PlatformException catch (e) {
-      AppLogger.error(_tag, 'getActiveAccessibilityServices failed: ${e.message}');
+      AppLogger.error(
+        _tag,
+        'getActiveAccessibilityServices failed: ${e.message}',
+      );
       return [];
     }
   }
 
   /// Screen recording detection via MediaProjectionManager + known recorder apps.
-  /// Returns {isRecording: bool, suspectApps: List<String>}
+  /// Returns `{isRecording, suspectApps}`.
   Future<Map<String, dynamic>> isScreenRecordingActive() async {
     try {
-      final raw = await _channel.invokeMethod<dynamic>('isScreenRecordingActive');
+      final raw = await _channel.invokeMethod<dynamic>(
+        'isScreenRecordingActive',
+      );
       if (raw == null) return {'isRecording': false, 'suspectApps': []};
       if (raw is Map) return Map<String, dynamic>.from(raw);
       return {'isRecording': false, 'suspectApps': []};
@@ -359,7 +386,7 @@ class PlatformChannelService {
   }
 
   /// Clipboard monitoring risk check.
-  /// Returns {suspectCount: int, suspectApps: List, hasClipboardContent: bool}
+  /// Returns `{suspectCount, suspectApps, hasClipboardContent}`
   Future<Map<String, dynamic>> getClipboardInfo() async {
     try {
       final raw = await _channel.invokeMethod<dynamic>('getClipboardInfo');
@@ -399,5 +426,3 @@ class PlatformChannelService {
     }
   }
 }
-
- 

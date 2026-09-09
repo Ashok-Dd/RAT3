@@ -64,7 +64,11 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   }
 
   Future<void> _requestSensors() async {
-    await [Permission.camera, Permission.microphone, Permission.location].request();
+    await [
+      Permission.camera,
+      Permission.microphone,
+      Permission.location,
+    ].request();
     await _refresh();
   }
 
@@ -80,6 +84,7 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   Future<void> _finish() async {
     setState(() => _busy = true);
     await context.read<AppController>().completeOnboarding();
+    if (mounted && Navigator.of(context).canPop()) Navigator.of(context).pop();
   }
 
   @override
@@ -93,9 +98,16 @@ class _OnboardingScreenState extends State<OnboardingScreen>
             children: [
               Row(
                 children: [
-                  const Icon(Icons.shield_moon_outlined, color: AppTheme.neonGreen, size: 30),
+                  const Icon(
+                    Icons.shield_moon_outlined,
+                    color: AppTheme.neonGreen,
+                    size: 30,
+                  ),
                   const SizedBox(width: 10),
-                  Text('RAT3', style: AppTheme.displayLarge.copyWith(fontSize: 30)),
+                  Text(
+                    'RAT3',
+                    style: AppTheme.displayLarge.copyWith(fontSize: 30),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
@@ -115,7 +127,8 @@ class _OnboardingScreenState extends State<OnboardingScreen>
               _PermTile(
                 icon: Icons.query_stats,
                 title: 'Usage access',
-                subtitle: 'See which apps run in the background and abuse sensors.',
+                subtitle:
+                    'See which apps run in the background and abuse sensors.',
                 granted: _usageAccess,
                 onGrant: _openUsageAccess,
               ),
@@ -189,13 +202,22 @@ class _PermTile extends StatelessWidget {
         borderColor: granted ? AppTheme.neonGreen.withValues(alpha: 0.4) : null,
         child: Row(
           children: [
-            Icon(icon, color: granted ? AppTheme.neonGreen : AppTheme.textSecondary, size: 24),
+            Icon(
+              icon,
+              color: granted ? AppTheme.neonGreen : AppTheme.textSecondary,
+              size: 24,
+            ),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: AppTheme.bodyLarge.copyWith(fontWeight: FontWeight.w600)),
+                  Text(
+                    title,
+                    style: AppTheme.bodyLarge.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   const SizedBox(height: 2),
                   Text(subtitle, style: AppTheme.labelSmall),
                 ],
@@ -203,7 +225,11 @@ class _PermTile extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             if (granted)
-              const Icon(Icons.check_circle, color: AppTheme.neonGreen, size: 22)
+              const Icon(
+                Icons.check_circle,
+                color: AppTheme.neonGreen,
+                size: 22,
+              )
             else
               TextButton(onPressed: onGrant, child: const Text('GRANT')),
           ],

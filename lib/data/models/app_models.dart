@@ -34,24 +34,24 @@ class AlertEvent {
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'severity': severity.name,
-        'title': title,
-        'description': description,
-        'userFriendlyMessage': userFriendlyMessage,
-        'timestamp': timestamp.toIso8601String(),
-        'source': source,
-      };
+    'id': id,
+    'severity': severity.name,
+    'title': title,
+    'description': description,
+    'userFriendlyMessage': userFriendlyMessage,
+    'timestamp': timestamp.toIso8601String(),
+    'source': source,
+  };
 
   factory AlertEvent.fromJson(Map<String, dynamic> json) => AlertEvent(
-        id: json['id'] as String,
-        severity: AlertSeverity.values.byName(json['severity'] as String),
-        title: json['title'] as String,
-        description: json['description'] as String,
-        userFriendlyMessage: json['userFriendlyMessage'] as String,
-        timestamp: DateTime.parse(json['timestamp'] as String),
-        source: json['source'] as String,
-      );
+    id: json['id'] as String,
+    severity: AlertSeverity.values.byName(json['severity'] as String),
+    title: json['title'] as String,
+    description: json['description'] as String,
+    userFriendlyMessage: json['userFriendlyMessage'] as String,
+    timestamp: DateTime.parse(json['timestamp'] as String),
+    source: json['source'] as String,
+  );
 }
 
 // ── Network Connection Model ───────────────────────────────────────────────
@@ -135,11 +135,11 @@ class RiskScore {
   final int score; // 0–100
   final RiskLevel level;
   // 6-category breakdown
-  final double runtimeContribution;    // system security sub-score
+  final double runtimeContribution; // system security sub-score
   final double networkContribution;
   final double permissionContribution;
-  final double sensorContribution;     // new
-  final double appContribution;        // new
+  final double sensorContribution; // new
+  final double appContribution; // new
   final double aggregatedContribution; // new
   final DateTime calculatedAt;
 
@@ -149,20 +149,20 @@ class RiskScore {
     required this.runtimeContribution,
     required this.networkContribution,
     required this.permissionContribution,
-    this.sensorContribution     = 0,
-    this.appContribution        = 0,
+    this.sensorContribution = 0,
+    this.appContribution = 0,
     this.aggregatedContribution = 0,
     required this.calculatedAt,
   });
 
   static RiskScore get initial => RiskScore(
-        score: 0,
-        level: RiskLevel.safe,
-        runtimeContribution: 0,
-        networkContribution: 0,
-        permissionContribution: 0,
-        calculatedAt: DateTime.now(),
-      );
+    score: 0,
+    level: RiskLevel.safe,
+    runtimeContribution: 0,
+    networkContribution: 0,
+    permissionContribution: 0,
+    calculatedAt: DateTime.now(),
+  );
 
   RiskLevel get computedLevel {
     if (score <= AppConstants.safeThreshold) return RiskLevel.safe;
@@ -204,9 +204,12 @@ enum AppRiskLevel {
 
   String get label {
     switch (this) {
-      case AppRiskLevel.safe:       return 'SAFE';
-      case AppRiskLevel.suspicious: return 'SUSPICIOUS';
-      case AppRiskLevel.malicious:  return 'MALICIOUS';
+      case AppRiskLevel.safe:
+        return 'SAFE';
+      case AppRiskLevel.suspicious:
+        return 'SUSPICIOUS';
+      case AppRiskLevel.malicious:
+        return 'MALICIOUS';
     }
   }
 }
@@ -215,7 +218,7 @@ class ScannedApp {
   final String packageName;
   final String appName;
   final bool isSystemApp;
-  final String installSource;   // "play_store" | "sideloaded" | "other:xxx"
+  final String installSource; // "play_store" | "sideloaded" | "other:xxx"
   final bool isSideloaded;
   final DateTime firstInstallTime;
   final DateTime lastUpdateTime;
@@ -224,13 +227,13 @@ class ScannedApp {
   final String versionName;
   final int targetSdkVersion;
   final List<String> allPermissions;
-  final List<String> dangerousGranted;  // DANGEROUS permissions actually granted
-  final List<String> grantedHighRisk;   // Subset: camera, mic, location, SMS etc.
-  final double backgroundTimeHrs;       // Real foreground/bg time from UsageStats
-  final bool isCurrentlyRunning;        // Real: from ActivityManager
-  final int riskScore;                  // 0–100 computed by Kotlin
-  final AppRiskLevel riskLevel;         // SAFE / SUSPICIOUS / MALICIOUS
-  final List<String> riskSignals;       // Human-readable reasons
+  final List<String> dangerousGranted; // DANGEROUS permissions actually granted
+  final List<String> grantedHighRisk; // Subset: camera, mic, location, SMS etc.
+  final double backgroundTimeHrs; // Real foreground/bg time from UsageStats
+  final bool isCurrentlyRunning; // Real: from ActivityManager
+  final int riskScore; // 0–100 computed by Kotlin
+  final AppRiskLevel riskLevel; // SAFE / SUSPICIOUS / MALICIOUS
+  final List<String> riskSignals; // Human-readable reasons
 
   const ScannedApp({
     required this.packageName,
@@ -257,32 +260,34 @@ class ScannedApp {
   factory ScannedApp.fromMap(Map<String, dynamic> m) {
     final levelStr = m['riskLevel'] as String? ?? 'SAFE';
     final level = switch (levelStr) {
-      'MALICIOUS'  => AppRiskLevel.malicious,
+      'MALICIOUS' => AppRiskLevel.malicious,
       'SUSPICIOUS' => AppRiskLevel.suspicious,
-      _            => AppRiskLevel.safe,
+      _ => AppRiskLevel.safe,
     };
     return ScannedApp(
-      packageName:       m['packageName']        as String? ?? '',
-      appName:           m['appName']            as String? ?? '',
-      isSystemApp:       m['isSystemApp']        as bool?   ?? false,
-      installSource:     m['installSource']      as String? ?? 'unknown',
-      isSideloaded:      m['isSideloaded']       as bool?   ?? false,
-      firstInstallTime:  DateTime.fromMillisecondsSinceEpoch(
-                           (m['firstInstallTime'] as num?)?.toInt() ?? 0),
-      lastUpdateTime:    DateTime.fromMillisecondsSinceEpoch(
-                           (m['lastUpdateTime'] as num?)?.toInt() ?? 0),
-      installDaysAgo:    (m['installDaysAgo']    as num?)?.toInt() ?? 0,
-      isRecentInstall:   m['isRecentInstall']    as bool?   ?? false,
-      versionName:       m['versionName']        as String? ?? '',
-      targetSdkVersion:  (m['targetSdkVersion']  as num?)?.toInt() ?? 0,
-      allPermissions:    List<String>.from(m['allPermissions']  as List? ?? []),
-      dangerousGranted:  List<String>.from(m['dangerousGranted'] as List? ?? []),
-      grantedHighRisk:   List<String>.from(m['grantedHighRisk'] as List? ?? []),
+      packageName: m['packageName'] as String? ?? '',
+      appName: m['appName'] as String? ?? '',
+      isSystemApp: m['isSystemApp'] as bool? ?? false,
+      installSource: m['installSource'] as String? ?? 'unknown',
+      isSideloaded: m['isSideloaded'] as bool? ?? false,
+      firstInstallTime: DateTime.fromMillisecondsSinceEpoch(
+        (m['firstInstallTime'] as num?)?.toInt() ?? 0,
+      ),
+      lastUpdateTime: DateTime.fromMillisecondsSinceEpoch(
+        (m['lastUpdateTime'] as num?)?.toInt() ?? 0,
+      ),
+      installDaysAgo: (m['installDaysAgo'] as num?)?.toInt() ?? 0,
+      isRecentInstall: m['isRecentInstall'] as bool? ?? false,
+      versionName: m['versionName'] as String? ?? '',
+      targetSdkVersion: (m['targetSdkVersion'] as num?)?.toInt() ?? 0,
+      allPermissions: List<String>.from(m['allPermissions'] as List? ?? []),
+      dangerousGranted: List<String>.from(m['dangerousGranted'] as List? ?? []),
+      grantedHighRisk: List<String>.from(m['grantedHighRisk'] as List? ?? []),
       backgroundTimeHrs: (m['backgroundTimeHrs'] as num?)?.toDouble() ?? 0.0,
-      isCurrentlyRunning:m['isCurrentlyRunning'] as bool?   ?? false,
-      riskScore:         (m['riskScore']         as num?)?.toInt() ?? 0,
-      riskLevel:         level,
-      riskSignals:       List<String>.from(m['riskSignals']  as List? ?? []),
+      isCurrentlyRunning: m['isCurrentlyRunning'] as bool? ?? false,
+      riskScore: (m['riskScore'] as num?)?.toInt() ?? 0,
+      riskLevel: level,
+      riskSignals: List<String>.from(m['riskSignals'] as List? ?? []),
     );
   }
 }
@@ -306,9 +311,9 @@ class AppNetworkUsage {
 
   factory AppNetworkUsage.fromMap(Map<String, dynamic> m) => AppNetworkUsage(
     packageName: m['packageName'] as String? ?? '',
-    appName:     m['appName']     as String? ?? '',
-    txBytes:     (m['txBytes']    as num?)?.toInt() ?? 0,
-    rxBytes:     (m['rxBytes']    as num?)?.toInt() ?? 0,
-    totalBytes:  (m['totalBytes'] as num?)?.toInt() ?? 0,
+    appName: m['appName'] as String? ?? '',
+    txBytes: (m['txBytes'] as num?)?.toInt() ?? 0,
+    rxBytes: (m['rxBytes'] as num?)?.toInt() ?? 0,
+    totalBytes: (m['totalBytes'] as num?)?.toInt() ?? 0,
   );
 }

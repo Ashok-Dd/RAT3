@@ -34,7 +34,7 @@ class CyberCard extends StatelessWidget {
           boxShadow: borderColor != null
               ? [
                   BoxShadow(
-                    color: borderColor!.withOpacity(0.15),
+                    color: borderColor!.withValues(alpha: 0.15),
                     blurRadius: 12,
                     spreadRadius: 1,
                   ),
@@ -75,7 +75,7 @@ class SectionHeader extends StatelessWidget {
           ),
         ),
         const Spacer(),
-        if (trailing != null) trailing!,
+        ?trailing,
       ],
     );
   }
@@ -108,9 +108,9 @@ class RiskLevelBadge extends StatelessWidget {
         vertical: large ? 6 : 3,
       ),
       decoration: BoxDecoration(
-        color: _color.withOpacity(0.15),
+        color: _color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: _color.withOpacity(0.6), width: 1),
+        border: Border.all(color: _color.withValues(alpha: 0.6), width: 1),
       ),
       child: Text(
         level.label,
@@ -151,7 +151,7 @@ class SeverityBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: _color.withOpacity(0.15),
+        color: _color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(3),
         border: Border.all(color: _color, width: 1),
       ),
@@ -192,9 +192,9 @@ class TrafficBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: _color.withOpacity(0.12),
+        color: _color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: _color.withOpacity(0.5)),
+        border: Border.all(color: _color.withValues(alpha: 0.5)),
       ),
       child: Text(
         category.label,
@@ -264,15 +264,15 @@ class _ScanPulseState extends State<ScanPulse>
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _anim,
-      builder: (_, __) => Container(
+      builder: (_, _) => Container(
         width: 8,
         height: 8,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: AppTheme.neonGreen.withOpacity(_anim.value),
+          color: AppTheme.neonGreen.withValues(alpha: _anim.value),
           boxShadow: [
             BoxShadow(
-              color: AppTheme.neonGreen.withOpacity(_anim.value * 0.5),
+              color: AppTheme.neonGreen.withValues(alpha: _anim.value * 0.5),
               blurRadius: 6,
               spreadRadius: 1,
             ),

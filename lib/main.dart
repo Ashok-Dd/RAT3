@@ -55,7 +55,9 @@ class _RootGate extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final onboarded = context.select<AppController, bool>((c) => c.onboardingComplete);
+    final onboarded = context.select<AppController, bool>(
+      (c) => c.onboardingComplete,
+    );
     return onboarded ? const AppShell() : const OnboardingScreen();
   }
 }

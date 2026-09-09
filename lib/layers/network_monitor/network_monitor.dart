@@ -21,10 +21,9 @@ class NetworkMonitor {
 
   final PlatformChannelService _platform;
   NetworkMonitor({required PlatformChannelService platform})
-      : _platform = platform;
+    : _platform = platform;
 
-  final _connectionController =
-      StreamController<NetworkConnection>.broadcast();
+  final _connectionController = StreamController<NetworkConnection>.broadcast();
   final _alertController = StreamController<AlertEvent>.broadcast();
 
   Stream<NetworkConnection> get connections => _connectionController.stream;
@@ -42,13 +41,24 @@ class NetworkMonitor {
 
   // Known malicious IP ranges
   static const List<String> _maliciousIpPrefixes = [
-    '185.220.', '185.100.', '194.165.',
-    '5.188.', '45.142.', '193.32.',
+    '185.220.',
+    '185.100.',
+    '194.165.',
+    '5.188.',
+    '45.142.',
+    '193.32.',
   ];
 
   // Suspicious RAT/backdoor ports
   static const List<int> _suspiciousPorts = [
-    1337, 4444, 4445, 6666, 6667, 8888, 9999, 31337,
+    1337,
+    4444,
+    4445,
+    6666,
+    6667,
+    8888,
+    9999,
+    31337,
   ];
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
@@ -85,9 +95,11 @@ class NetworkMonitor {
       // SECONDARY: TCP connections from /proc/net/tcp (Android 9 and below)
       final tcpConns = await _platform.getNetworkConnections();
 
-      AppLogger.info(_tag,
-          'Network: ${appNetUsage.length} apps with traffic, '
-          '${tcpConns.length} TCP connections');
+      AppLogger.info(
+        _tag,
+        'Network: ${appNetUsage.length} apps with traffic, '
+        '${tcpConns.length} TCP connections',
+      );
 
       // Build a set of active TCP connection remote IPs for cross-referencing
       final activeTcpIps = <String>{};
@@ -104,12 +116,16 @@ class NetworkMonitor {
       const selfPackage = 'com.example.rat3';
 
       // Skip all well-known system / Google infrastructure packages
-      bool _shouldSkip(String pkg) {
+      bool shouldSkip(String pkg) {
         if (pkg == selfPackage) return true;
         const skip = [
-          'com.android.', 'android.', 'com.google.android.gms',
-          'com.google.android.gsf', 'com.google.android.webview',
-          'com.google.android.networkstack', 'com.google.android.permissioncontroller',
+          'com.android.',
+          'android.',
+          'com.google.android.gms',
+          'com.google.android.gsf',
+          'com.google.android.webview',
+          'com.google.android.networkstack',
+          'com.google.android.permissioncontroller',
           'com.google.android.cellbroadcastreceiver',
           'com.google.android.captiveportallogin',
           'com.google.android.connectivity',
@@ -126,12 +142,12 @@ class NetworkMonitor {
       // Process each app that has network activity
       for (final app in appNetUsage) {
         final pkgName = app['packageName'] as String? ?? '';
-        final appName = app['appName']     as String? ?? pkgName;
-        final txBytes = (app['txBytes']    as num?)?.toInt() ?? 0;
-        final rxBytes = (app['rxBytes']    as num?)?.toInt() ?? 0;
+        final appName = app['appName'] as String? ?? pkgName;
+        final txBytes = (app['txBytes'] as num?)?.toInt() ?? 0;
+        final rxBytes = (app['rxBytes'] as num?)?.toInt() ?? 0;
 
         // Skip self and system packages
-        if (_shouldSkip(pkgName)) continue;
+        if (shouldSkip(pkgName)) continue;
 
         // Skip apps with no meaningful traffic (< 1 KB)
         if (txBytes < 1024 && rxBytes < 1024) continue;
@@ -139,7 +155,8 @@ class NetworkMonitor {
         // Detect ACTIVE upload: compare with previous snapshot
         final prevTx = _previousTxSnapshot[pkgName] ?? 0;
         final deltaTx = txBytes - prevTx;
-        final isActivelyUploading = deltaTx > 50 * 1024; // 50KB+ new since last check
+        final isActivelyUploading =
+            deltaTx > 50 * 1024; // 50KB+ new since last check
         _previousTxSnapshot[pkgName] = txBytes;
 
         // Classify based on upload behavior and known signals
@@ -169,8 +186,12 @@ class NetworkMonitor {
         );
 
         results.add(conn);
-        _processConnection(conn, appName: appName, deltaTx: deltaTx,
-            isActivelyUploading: isActivelyUploading);
+        _processConnection(
+          conn,
+          appName: appName,
+          deltaTx: deltaTx,
+          isActivelyUploading: isActivelyUploading,
+        );
       }
 
       // Also process raw TCP connections if available (Android 9-)
@@ -185,7 +206,8 @@ class NetworkMonitor {
         // Only add if not already covered by app usage
         final category = _classifyIp(ip, port);
         if (category == TrafficCategory.malicious ||
-            (category == TrafficCategory.suspicious && _isSuspiciousPort(port))) {
+            (category == TrafficCategory.suspicious &&
+                _isSuspiciousPort(port))) {
           final conn = NetworkConnection(
             id: 'tcp_${DateTime.now().millisecondsSinceEpoch}_$i',
             domain: ip,
@@ -201,7 +223,6 @@ class NetworkMonitor {
           _processConnection(conn, appName: ip);
         }
       }
-
     } catch (e) {
       AppLogger.error(_tag, '_scanNetworkConnections error', e);
     }
@@ -217,10 +238,12 @@ class NetworkMonitor {
     _detectedConnections.add(conn);
     if (_detectedConnections.length > 100) _detectedConnections.removeAt(0);
     if (!_connectionController.isClosed) _connectionController.add(conn);
-    _emitNetworkAlerts(conn,
-        appName: appName,
-        deltaTx: deltaTx,
-        isActivelyUploading: isActivelyUploading);
+    _emitNetworkAlerts(
+      conn,
+      appName: appName,
+      deltaTx: deltaTx,
+      isActivelyUploading: isActivelyUploading,
+    );
   }
 
   // ── App Network Classification ─────────────────────────────────────────────
@@ -265,19 +288,23 @@ class NetworkMonitor {
         id: 'net_malicious_${conn.ipAddress}',
         severity: AlertSeverity.critical,
         title: 'Active Data Exfiltration Detected',
-        description: '"$appName" is actively sending large amounts of data '
+        description:
+            '"$appName" is actively sending large amounts of data '
             '(${AppFormatter.formatBytes(deltaTx)} in last 20s)',
-        userMessage: '"$appName" is uploading ${AppFormatter.formatBytes(deltaTx)} '
+        userMessage:
+            '"$appName" is uploading ${AppFormatter.formatBytes(deltaTx)} '
             'of data right now. This matches data exfiltration behavior. '
             'The app may be transmitting your personal data without permission.',
       );
-    } else if (conn.category == TrafficCategory.suspicious && isActivelyUploading) {
+    } else if (conn.category == TrafficCategory.suspicious &&
+        isActivelyUploading) {
       _emit(
         id: 'net_upload_${conn.ipAddress}_${DateTime.now().minute}',
         severity: AlertSeverity.high,
         title: 'Suspicious Active Upload',
         description: '"$appName" is actively sending data in background',
-        userMessage: '"$appName" is currently sending data '
+        userMessage:
+            '"$appName" is currently sending data '
             '(${AppFormatter.formatBytes(deltaTx)} uploaded recently). '
             'If you are not actively using this app, this is suspicious.',
       );
@@ -286,8 +313,10 @@ class NetworkMonitor {
         id: 'net_highdata_${conn.ipAddress}',
         severity: AlertSeverity.medium,
         title: 'High Data Usage',
-        description: '"$appName" has sent ${AppFormatter.formatBytes(conn.bytesSent)}',
-        userMessage: '"$appName" has sent a large amount of data '
+        description:
+            '"$appName" has sent ${AppFormatter.formatBytes(conn.bytesSent)}',
+        userMessage:
+            '"$appName" has sent a large amount of data '
             '(${AppFormatter.formatBytes(conn.bytesSent)}). '
             'Review if this matches your expected app activity.',
       );
@@ -319,15 +348,23 @@ class NetworkMonitor {
   bool _isLoopback(String ip) =>
       ip.startsWith('127.') || ip == '::1' || ip == '0.0.0.0';
   bool _isPrivateIp(String ip) =>
-      ip.startsWith('10.') || ip.startsWith('192.168.') ||
-      ip.startsWith('172.16.') || ip.startsWith('172.17.') ||
-      ip.startsWith('172.18.') || ip.startsWith('172.19.') ||
-      ip.startsWith('172.2') || ip.startsWith('172.3');
+      ip.startsWith('10.') ||
+      ip.startsWith('192.168.') ||
+      ip.startsWith('172.16.') ||
+      ip.startsWith('172.17.') ||
+      ip.startsWith('172.18.') ||
+      ip.startsWith('172.19.') ||
+      ip.startsWith('172.2') ||
+      ip.startsWith('172.3');
   bool _isKnownSafeBlock(String ip) =>
-      ip.startsWith('142.250.') || ip.startsWith('172.217.') ||
-      ip.startsWith('216.58.') || ip.startsWith('8.8.') ||
-      ip.startsWith('104.16.') || ip.startsWith('1.1.1.') ||
-      ip.startsWith('54.') || ip.startsWith('52.');
+      ip.startsWith('142.250.') ||
+      ip.startsWith('172.217.') ||
+      ip.startsWith('216.58.') ||
+      ip.startsWith('8.8.') ||
+      ip.startsWith('104.16.') ||
+      ip.startsWith('1.1.1.') ||
+      ip.startsWith('54.') ||
+      ip.startsWith('52.');
 
   String _extractIp(String addrPort) {
     final last = addrPort.lastIndexOf(':');
@@ -350,9 +387,12 @@ class NetworkMonitor {
     double score = 0;
     for (final c in recent) {
       switch (c.category) {
-        case TrafficCategory.malicious:  score += 50;
-        case TrafficCategory.suspicious: score += 10;
-        case TrafficCategory.safe:       break;
+        case TrafficCategory.malicious:
+          score += 50;
+        case TrafficCategory.suspicious:
+          score += 10;
+        case TrafficCategory.safe:
+          break;
       }
     }
     return score.clamp(0, 100);

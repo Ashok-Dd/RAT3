@@ -1,9 +1,9 @@
-/// Central constants for RAT-Prevention application
+/// Central constants for RAT3 application
 class AppConstants {
   AppConstants._();
 
   // App Info
-  static const String appName = 'RAT-Prevention';
+  static const String appName = 'RAT3';
   static const String appVersion = '1.0.0';
 
   // Risk Score Thresholds

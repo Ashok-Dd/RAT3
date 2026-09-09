@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// RAT-Prevention Cybersecurity Theme
+/// RAT3 Cybersecurity Theme
 /// Dark background with neon green/cyan accents
 class AppTheme {
   AppTheme._();
@@ -19,7 +19,7 @@ class AppTheme {
   static const Color neonYellow = Color(0xFFFFDD00);
 
   // Aliases used in app scan screen
-  static const Color alertRed    = neonRed;
+  static const Color alertRed = neonRed;
   static const Color alertOrange = neonOrange;
 
   static const Color textPrimary = Color(0xFFE0F2F1);
@@ -27,7 +27,7 @@ class AppTheme {
   static const Color textMuted = Color(0xFF405060);
 
   static const Color borderColor = Color(0xFF1A3040);
-  static const Color borderAccent = Color(0xFF00FF8833);
+  static const Color borderAccent = Color(0x3300FF88);
 
   // ── Risk Colors ────────────────────────────────────────────────────────────
   static const Color colorSafe = neonGreen;
@@ -143,15 +143,9 @@ class AppTheme {
           fontSize: 10,
           letterSpacing: 0.5,
         ),
-        unselectedLabelStyle: TextStyle(
-          fontFamily: 'Inter',
-          fontSize: 10,
-        ),
+        unselectedLabelStyle: TextStyle(fontFamily: 'Inter', fontSize: 10),
       ),
-      dividerTheme: const DividerThemeData(
-        color: borderColor,
-        thickness: 1,
-      ),
+      dividerTheme: const DividerThemeData(color: borderColor, thickness: 1),
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           backgroundColor: neonGreen,
@@ -161,9 +155,7 @@ class AppTheme {
             fontWeight: FontWeight.w700,
             letterSpacing: 1.5,
           ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(4),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
         ),
       ),
       sliderTheme: const SliderThemeData(
@@ -180,9 +172,8 @@ class AppTheme {
       ),
       switchTheme: SwitchThemeData(
         thumbColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected)
-              ? neonGreen
-              : textMuted,
+          (states) =>
+              states.contains(WidgetState.selected) ? neonGreen : textMuted,
         ),
         trackColor: WidgetStateProperty.resolveWith(
           (states) => states.contains(WidgetState.selected)
@@ -192,10 +183,7 @@ class AppTheme {
       ),
       snackBarTheme: const SnackBarThemeData(
         backgroundColor: backgroundElevated,
-        contentTextStyle: TextStyle(
-          fontFamily: 'Inter',
-          color: textPrimary,
-        ),
+        contentTextStyle: TextStyle(fontFamily: 'Inter', color: textPrimary),
         shape: RoundedRectangleBorder(),
       ),
     );

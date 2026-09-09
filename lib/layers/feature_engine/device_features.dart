@@ -18,105 +18,111 @@ class DeviceFeatures {
   // ═══════════════════════════════════════════════════════════════
 
   // Camera
-  final bool  cameraActiveNow;           // hardware-level: is camera open this instant
-  final int   cameraAppsWithPermission;  // how many user apps have camera permission
-  final int   cameraAppsRecentFg;        // subset that were in foreground recently
-  final bool  cameraActiveWhenScreenOff; // detected via CameraManager unavailability + screen state
-  final bool  cameraActiveDuringIdle;    // active between 23:00–06:00
+  final bool cameraActiveNow; // hardware-level: is camera open this instant
+  final int
+  cameraAppsWithPermission; // how many user apps have camera permission
+  final int cameraAppsRecentFg; // subset that were in foreground recently
+  final bool
+  cameraActiveWhenScreenOff; // detected via CameraManager unavailability + screen state
+  final bool cameraActiveDuringIdle; // active between 23:00–06:00
 
   // Microphone
-  final bool  micActiveNow;              // hardware-level: AudioManager.getActiveRecordingConfigurations
-  final int   micAppsWithPermission;     // how many user apps have mic permission
-  final int   micAppsRecentFg;
-  final bool  micActiveOutsideCalls;     // active but no call in progress
-  final bool  micActiveWhenScreenOff;
-  final bool  micActiveDuringIdle;
+  final bool
+  micActiveNow; // hardware-level: AudioManager.getActiveRecordingConfigurations
+  final int micAppsWithPermission; // how many user apps have mic permission
+  final int micAppsRecentFg;
+  final bool micActiveOutsideCalls; // active but no call in progress
+  final bool micActiveWhenScreenOff;
+  final bool micActiveDuringIdle;
 
   // Location
-  final int   locationAppsWithPermission;
-  final int   locationBgAppsCount;       // apps with ACCESS_BACKGROUND_LOCATION
-  final bool  locationActiveDuringIdle;
+  final int locationAppsWithPermission;
+  final int locationBgAppsCount; // apps with ACCESS_BACKGROUND_LOCATION
+  final bool locationActiveDuringIdle;
 
   // Derived sensor metrics
-  final double sensorActivityEntropy;    // 0–1: how unpredictably sensors fire
+  final double sensorActivityEntropy; // 0–1: how unpredictably sensors fire
   final double sensorUsageIrregularity; // 0–100: deviation from normal patterns
 
   // ═══════════════════════════════════════════════════════════════
   // 2. PERMISSION BEHAVIOR FEATURES
   // ═══════════════════════════════════════════════════════════════
 
-  final int    dangerousPermissionCount;          // DANGEROUS-level permissions granted to user apps
-  final int    highRiskPermissionCount;           // camera + mic + location + SMS + contacts
-  final bool   cameraPermissionGranted;
-  final bool   micPermissionGranted;
-  final bool   locationPermissionGranted;
-  final bool   bgLocationPermissionGranted;
-  final bool   accessibilityPermissionActive;     // any app has accessibility service running
-  final bool   deviceAdminActive;                 // any app has device admin rights
-  final double unusedButGrantedRatio;             // granted but app not used in 7 days
-  final double permissionsVsUsageMismatch;        // 0–100 mismatch score
+  final int
+  dangerousPermissionCount; // DANGEROUS-level permissions granted to user apps
+  final int highRiskPermissionCount; // camera + mic + location + SMS + contacts
+  final bool cameraPermissionGranted;
+  final bool micPermissionGranted;
+  final bool locationPermissionGranted;
+  final bool bgLocationPermissionGranted;
+  final bool
+  accessibilityPermissionActive; // any app has accessibility service running
+  final bool deviceAdminActive; // any app has device admin rights
+  final double unusedButGrantedRatio; // granted but app not used in 7 days
+  final double permissionsVsUsageMismatch; // 0–100 mismatch score
 
   // ═══════════════════════════════════════════════════════════════
   // 3. APP BEHAVIOR FEATURES
   // ═══════════════════════════════════════════════════════════════
 
-  final int    totalUserInstalledApps;
-  final int    nonPlayStoreAppCount;              // sideloaded / unknown installer
-  final int    recentlyInstalledAppCount;         // installed in last 7 days
-  final int    unknownInstallerAppCount;
-  final int    appsTargetingOldSdkCount;          // targetSdk < 26 (pre-Oreo)
-  final int    appsWithAccessibilityCount;
-  final int    appsRunningInBgCount;
-  final int    backgroundServicesActiveCount;
-  final int    appsRunningDuringIdleCount;        // had activity between 23:00–06:00
-  final double appInstallRatePerWeek;             // new installs / 7 days
+  final int totalUserInstalledApps;
+  final int nonPlayStoreAppCount; // sideloaded / unknown installer
+  final int recentlyInstalledAppCount; // installed in last 7 days
+  final int unknownInstallerAppCount;
+  final int appsTargetingOldSdkCount; // targetSdk < 26 (pre-Oreo)
+  final int appsWithAccessibilityCount;
+  final int appsRunningInBgCount;
+  final int backgroundServicesActiveCount;
+  final int appsRunningDuringIdleCount; // had activity between 23:00–06:00
+  final double appInstallRatePerWeek; // new installs / 7 days
   final double appUninstallRatePerWeek;
-  final bool   frequentInstallUninstallPattern;   // install+uninstall same week
+  final bool frequentInstallUninstallPattern; // install+uninstall same week
 
   // ═══════════════════════════════════════════════════════════════
   // 4. SYSTEM BEHAVIOR FEATURES
   // ═══════════════════════════════════════════════════════════════
 
-  final bool   developerOptionsEnabled;
-  final bool   usbDebuggingEnabled;
-  final bool   unknownSourcesEnabled;             // install from unknown sources
-  final int    batteryOptDisabledAppsCount;       // apps ignoring battery optimization
-  final double cpuUsagePercent;                   // current real CPU %
-  final double cpuUsageWhenScreenOff;             // approximated from idle readings
-  final double screenOnToUsageRatio;              // screen on time vs active app time
-  final bool   rootDetected;
-  final int    activeDeviceAdminCount;
-  final bool   accessibilityServicesActive;
+  final bool developerOptionsEnabled;
+  final bool usbDebuggingEnabled;
+  final bool unknownSourcesEnabled; // install from unknown sources
+  final int batteryOptDisabledAppsCount; // apps ignoring battery optimization
+  final double cpuUsagePercent; // current real CPU %
+  final double cpuUsageWhenScreenOff; // approximated from idle readings
+  final double screenOnToUsageRatio; // screen on time vs active app time
+  final bool rootDetected;
+  final int activeDeviceAdminCount;
+  final bool accessibilityServicesActive;
   final double memoryUsagePercent;
-  final double batteryDrainRatePerHour;           // %/hr from BatteryManager
+  final double batteryDrainRatePerHour; // %/hr from BatteryManager
 
   // ═══════════════════════════════════════════════════════════════
   // 5. NETWORK & RESOURCE FEATURES
   // ═══════════════════════════════════════════════════════════════
 
-  final double bgDataSentMb;                     // total background TX in MB
-  final double bgDataReceivedMb;                 // total background RX in MB
-  final double dataSentDuringIdleMb;             // TX between 23:00–06:00
-  final double dataSentWithoutInteraction;       // TX when screen was off
-  final int    uniqueRemoteIpsCount;             // distinct external IPs contacted
-  final bool   frequentSmallPackets;             // many tiny uploads (C2C beacon pattern)
-  final double cpuSpikesWhenScreenOff;           // count of spikes during screen-off
-  final double memoryUsageVariance;              // stddev of memory readings
-  final int    maliciousConnectionCount;
-  final int    suspiciousConnectionCount;
+  final double bgDataSentMb; // total background TX in MB
+  final double bgDataReceivedMb; // total background RX in MB
+  final double dataSentDuringIdleMb; // TX between 23:00–06:00
+  final double dataSentWithoutInteraction; // TX when screen was off
+  final int uniqueRemoteIpsCount; // distinct external IPs contacted
+  final bool frequentSmallPackets; // many tiny uploads (C2C beacon pattern)
+  final double cpuSpikesWhenScreenOff; // count of spikes during screen-off
+  final double memoryUsageVariance; // stddev of memory readings
+  final int maliciousConnectionCount;
+  final int suspiciousConnectionCount;
 
   // Correlation features
-  final bool   dataSentWhenMicActive;            // network TX detected while mic on
-  final bool   dataSentWhenCameraActive;         // network TX detected while camera on
-  final bool   networkDuringSensorUsage;         // combined: any sensor + network
+  final bool dataSentWhenMicActive; // network TX detected while mic on
+  final bool dataSentWhenCameraActive; // network TX detected while camera on
+  final bool networkDuringSensorUsage; // combined: any sensor + network
 
   // ═══════════════════════════════════════════════════════════════
   // 6. FINAL AGGREGATED FEATURES
   // ═══════════════════════════════════════════════════════════════
 
-  final double fgToBgActivityRatio;             // foreground time / background time
-  final double sensorToNetworkCorrelation;      // 0–1: how much sensors fire with network
-  final double overallIdleAnomalyScore;         // 0–100: activity during idle hours
+  final double fgToBgActivityRatio; // foreground time / background time
+  final double
+  sensorToNetworkCorrelation; // 0–1: how much sensors fire with network
+  final double overallIdleAnomalyScore; // 0–100: activity during idle hours
 
   const DeviceFeatures({
     required this.collectedAt,

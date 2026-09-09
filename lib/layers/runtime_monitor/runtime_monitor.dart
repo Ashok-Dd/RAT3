@@ -21,7 +21,7 @@ class RuntimeMonitor {
   final PlatformChannelService _platform;
 
   RuntimeMonitor({required PlatformChannelService platform})
-      : _platform = platform;
+    : _platform = platform;
 
   final _eventController = StreamController<RuntimeEvent>.broadcast();
   final _alertController = StreamController<AlertEvent>.broadcast();
@@ -139,23 +139,26 @@ class RuntimeMonitor {
       final info = await _platform.getMemoryInfo();
       if (info.isEmpty) return null;
 
-      final totalRam     = (info['totalRam']     as num?)?.toInt() ?? 0;
+      final totalRam = (info['totalRam'] as num?)?.toInt() ?? 0;
       final availableRam = (info['availableRam'] as num?)?.toInt() ?? 0;
-      final isLowMemory  = (info['lowMemory']    as bool?) ?? false;
+      final isLowMemory = (info['lowMemory'] as bool?) ?? false;
 
       if (totalRam == 0) return null;
 
       final usedPct = ((totalRam - availableRam) / totalRam * 100);
-      AppLogger.info(_tag,
-          'Memory: ${AppFormatter.formatBytes(totalRam - availableRam)} used '
-          '/ ${AppFormatter.formatBytes(totalRam)} total '
-          '(${usedPct.toStringAsFixed(1)}%)');
+      AppLogger.info(
+        _tag,
+        'Memory: ${AppFormatter.formatBytes(totalRam - availableRam)} used '
+        '/ ${AppFormatter.formatBytes(totalRam)} total '
+        '(${usedPct.toStringAsFixed(1)}%)',
+      );
 
       if (isLowMemory || usedPct > 90) {
         final event = _addEvent(
           type: RuntimeEventType.memoryAnomaly,
           value: usedPct,
-          details: 'Memory at ${usedPct.toStringAsFixed(1)}% '
+          details:
+              'Memory at ${usedPct.toStringAsFixed(1)}% '
               '(${AppFormatter.formatBytes(availableRam)} free)',
         );
         _emitAlert(
@@ -194,8 +197,7 @@ class RuntimeMonitor {
         final event = _addEvent(
           type: RuntimeEventType.backgroundExecution,
           value: backgroundProcs.length.toDouble(),
-          details:
-              '${backgroundProcs.length} processes running in background',
+          details: '${backgroundProcs.length} processes running in background',
         );
         _emitAlert(
           event: event,
@@ -223,12 +225,15 @@ class RuntimeMonitor {
       final flags = await _platform.getSecurityFlags();
       if (flags.isEmpty) return events;
 
-      final isRooted          = flags['isRooted']                   as bool? ?? false;
-      final usbDebugging      = flags['isUsbDebuggingEnabled']      as bool? ?? false;
-      final developerOptions  = flags['isDeveloperOptionsEnabled']   as bool? ?? false;
+      final isRooted = flags['isRooted'] as bool? ?? false;
+      final usbDebugging = flags['isUsbDebuggingEnabled'] as bool? ?? false;
+      final developerOptions =
+          flags['isDeveloperOptionsEnabled'] as bool? ?? false;
 
-      AppLogger.info(_tag,
-          'Security flags — rooted:$isRooted usbDebug:$usbDebugging devOptions:$developerOptions');
+      AppLogger.info(
+        _tag,
+        'Security flags — rooted:$isRooted usbDebug:$usbDebugging devOptions:$developerOptions',
+      );
 
       if (isRooted) {
         final event = _addEvent(
@@ -295,7 +300,9 @@ class RuntimeMonitor {
     final events = <RuntimeEvent>[];
     try {
       final stats = await _platform.getUsageStats();
-      if (stats.isEmpty) return events; // Permission not granted — skip silently
+      if (stats.isEmpty) {
+        return events; // Permission not granted — skip silently
+      }
 
       // Flag any app with more than 2 hours of foreground time in past 24h
       // that is not a system launcher/home screen app
@@ -303,21 +310,24 @@ class RuntimeMonitor {
 
       final heavyApps = stats.where((s) {
         final time = (s['totalTimeInForeground'] as num?)?.toInt() ?? 0;
-        final pkg  = s['packageName'] as String? ?? '';
+        final pkg = s['packageName'] as String? ?? '';
         // Filter out known launchers / system apps
-        final isKnownSystem = pkg.contains('launcher') ||
+        final isKnownSystem =
+            pkg.contains('launcher') ||
             pkg.contains('systemui') ||
             pkg == 'android';
         return time > twoHoursMs && !isKnownSystem;
       }).toList();
 
-      AppLogger.info(_tag,
-          'Usage stats: ${stats.length} apps, ${heavyApps.length} heavy users');
+      AppLogger.info(
+        _tag,
+        'Usage stats: ${stats.length} apps, ${heavyApps.length} heavy users',
+      );
 
       for (final app in heavyApps.take(3)) {
-        final pkg  = app['packageName'] as String? ?? 'Unknown';
+        final pkg = app['packageName'] as String? ?? 'Unknown';
         final time = (app['totalTimeInForeground'] as num?)?.toInt() ?? 0;
-        final hrs  = (time / 3600000).toStringAsFixed(1);
+        final hrs = (time / 3600000).toStringAsFixed(1);
 
         final event = _addEvent(
           type: RuntimeEventType.backgroundExecution,
@@ -393,7 +403,11 @@ class RuntimeMonitor {
           score += (e.value / 120).clamp(0, 1) * 20;
         case RuntimeEventType.serviceRestart:
           // value 1=root(+40), 2=usbDebug(+25), 3=devOptions(+10)
-          score += e.value == 1 ? 40 : e.value == 2 ? 25 : 10;
+          score += e.value == 1
+              ? 40
+              : e.value == 2
+              ? 25
+              : 10;
         case RuntimeEventType.memoryAnomaly:
           score += (e.value / 100) * 20;
       }

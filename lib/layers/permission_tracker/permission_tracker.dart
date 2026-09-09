@@ -1,8 +1,9 @@
 import 'dart:async';
+
 import 'package:permission_handler/permission_handler.dart';
+import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/core/utils/app_utils.dart';
 import 'package:rat3/data/models/app_models.dart';
-import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/data/services/platform_channel_service.dart';
 
 /// Layer 3 – Permission Usage Tracker
@@ -26,7 +27,7 @@ class PermissionTracker {
   final PlatformChannelService _platform;
 
   PermissionTracker({required PlatformChannelService platform})
-      : _platform = platform;
+    : _platform = platform;
 
   final _permissionController =
       StreamController<List<PermissionUsage>>.broadcast();
@@ -37,7 +38,8 @@ class PermissionTracker {
   Stream<AlertEvent> get alerts => _alertController.stream;
 
   List<PermissionUsage> _lastUsageSnapshot = [];
-  List<PermissionUsage> get lastSnapshot => List.unmodifiable(_lastUsageSnapshot);
+  List<PermissionUsage> get lastSnapshot =>
+      List.unmodifiable(_lastUsageSnapshot);
 
   // ── Sensitive permissions to audit ────────────────────────────────────────
 
@@ -54,20 +56,22 @@ class PermissionTracker {
   ];
 
   static final Map<Permission, String> _permissionNames = {
-    Permission.camera:             'Camera',
-    Permission.microphone:         'Microphone',
-    Permission.location:           'Location (Foreground)',
-    Permission.locationAlways:     'Location (Background)',
-    Permission.contacts:           'Contacts',
-    Permission.sms:                'SMS',
-    Permission.phone:              'Phone',
-    Permission.storage:            'Storage',
-    Permission.activityRecognition:'Activity Recognition',
+    Permission.camera: 'Camera',
+    Permission.microphone: 'Microphone',
+    Permission.location: 'Location (Foreground)',
+    Permission.locationAlways: 'Location (Background)',
+    Permission.contacts: 'Contacts',
+    Permission.sms: 'SMS',
+    Permission.phone: 'Phone',
+    Permission.storage: 'Storage',
+    Permission.activityRecognition: 'Activity Recognition',
   };
 
   // These permissions are high-risk if accessed in background
   static const List<String> _highRiskPermissions = [
-    'Camera', 'Microphone', 'Location (Background)',
+    'Camera',
+    'Microphone',
+    'Location (Background)',
   ];
 
   // ── Real Scan ──────────────────────────────────────────────────────────────
@@ -80,22 +84,24 @@ class PermissionTracker {
     final usageStats = await _platform.getUsageStats();
     final usageMap = <String, int>{};
     for (final stat in usageStats) {
-      final pkg  = stat['packageName'] as String? ?? '';
+      final pkg = stat['packageName'] as String? ?? '';
       final time = (stat['totalTimeInForeground'] as num?)?.toInt() ?? 0;
       if (pkg.isNotEmpty) usageMap[pkg] = time;
     }
 
-    AppLogger.info(_tag,
-        'Usage stats loaded: ${usageMap.length} apps with activity');
+    AppLogger.info(
+      _tag,
+      'Usage stats loaded: ${usageMap.length} apps with activity',
+    );
 
     // 2. Check each sensitive permission using real permission_handler API
     for (final permission in _sensitivePermissions) {
       try {
         // Real Android permission status — no simulation
-        final status     = await permission.status;
-        final isGranted  = status.isGranted;
+        final status = await permission.status;
+        final isGranted = status.isGranted;
         final isDeclared = status != PermissionStatus.permanentlyDenied;
-        final name       = _permissionNames[permission] ?? permission.toString();
+        final name = _permissionNames[permission] ?? permission.toString();
 
         // 3. Determine if this permission is being abused in background
         //    using REAL usage stats data
@@ -108,13 +114,13 @@ class PermissionTracker {
 
         // 4. Calculate real usage count from apps that have this permission
         //    and have non-zero foreground time
-        final usageCount = isGranted
-            ? _estimateUsageCount(name, usageMap)
-            : 0;
+        final usageCount = isGranted ? _estimateUsageCount(name, usageMap) : 0;
 
-        AppLogger.info(_tag,
-            'Permission "$name": granted=$isGranted '
-            'bgAbuse=$isBackgroundAbuse usageCount=$usageCount');
+        AppLogger.info(
+          _tag,
+          'Permission "$name": granted=$isGranted '
+          'bgAbuse=$isBackgroundAbuse usageCount=$usageCount',
+        );
 
         final usage = PermissionUsage(
           permissionName: name,
@@ -193,7 +199,8 @@ class PermissionTracker {
 
   void _emitAlert(PermissionUsage usage) {
     final alert = AlertEvent(
-      id: 'perm_${usage.permissionName.replaceAll(' ', '_')}_'
+      id:
+          'perm_${usage.permissionName.replaceAll(' ', '_')}_'
           '${DateTime.now().millisecondsSinceEpoch}',
       severity: AlertSeverity.high,
       title: 'Sensitive Permission Background Activity',
@@ -219,8 +226,8 @@ class PermissionTracker {
     if (_lastUsageSnapshot.isEmpty) return 0;
 
     final suspicious = _lastUsageSnapshot.where((u) => u.isSuspicious).length;
-    final granted    = _lastUsageSnapshot.where((u) => u.isCurrentlyUsed).length;
-    final total      = _lastUsageSnapshot.length;
+    final granted = _lastUsageSnapshot.where((u) => u.isCurrentlyUsed).length;
+    final total = _lastUsageSnapshot.length;
 
     // Base score: ratio of suspicious to total
     double score = (suspicious / total) * 60;

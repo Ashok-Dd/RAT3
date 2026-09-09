@@ -9,11 +9,7 @@ class RiskBall extends StatefulWidget {
   final int score;
   final double size;
 
-  const RiskBall({
-    super.key,
-    required this.score,
-    this.size = 200,
-  });
+  const RiskBall({super.key, required this.score, this.size = 200});
 
   @override
   State<RiskBall> createState() => _RiskBallState();
@@ -51,7 +47,7 @@ class _RiskBallState extends State<RiskBall>
       height: widget.size,
       child: AnimatedBuilder(
         animation: _waveCtrl,
-        builder: (_, __) {
+        builder: (_, _) {
           return CustomPaint(
             painter: _WaterBallPainter(
               score: widget.score,
@@ -65,7 +61,7 @@ class _RiskBallState extends State<RiskBall>
                   TweenAnimationBuilder<int>(
                     tween: IntTween(begin: 0, end: widget.score),
                     duration: const Duration(milliseconds: 800),
-                    builder: (_, value, __) => Text(
+                    builder: (_, value, _) => Text(
                       '$value',
                       style: TextStyle(
                         fontFamily: 'Courier',
@@ -74,7 +70,7 @@ class _RiskBallState extends State<RiskBall>
                         color: Colors.white,
                         shadows: [
                           Shadow(
-                            color: _waterColor.withOpacity(0.8),
+                            color: _waterColor.withValues(alpha: 0.8),
                             blurRadius: 12,
                           ),
                         ],
@@ -138,7 +134,8 @@ class _WaterBallPainter extends CustomPainter {
     wavePath.lineTo(0, waterTop);
 
     for (double x = 0; x <= size.width; x++) {
-      final y = waterTop +
+      final y =
+          waterTop +
           sin((x / size.width * 2 * pi) + wavePhase) * 6 +
           cos((x / size.width * pi) + wavePhase * 0.7) * 4;
       wavePath.lineTo(x, y);
@@ -151,7 +148,7 @@ class _WaterBallPainter extends CustomPainter {
     canvas.drawPath(
       wavePath,
       Paint()
-        ..color = waterColor.withOpacity(0.5)
+        ..color = waterColor.withValues(alpha: 0.5)
         ..style = PaintingStyle.fill,
     );
 
@@ -161,7 +158,8 @@ class _WaterBallPainter extends CustomPainter {
     wave2Path.lineTo(0, waterTop + 5);
 
     for (double x = 0; x <= size.width; x++) {
-      final y = waterTop +
+      final y =
+          waterTop +
           5 +
           sin((x / size.width * 2 * pi) + wavePhase + pi) * 4 +
           cos((x / size.width * pi) + wavePhase) * 3;
@@ -174,7 +172,7 @@ class _WaterBallPainter extends CustomPainter {
     canvas.drawPath(
       wave2Path,
       Paint()
-        ..color = waterColor.withOpacity(0.3)
+        ..color = waterColor.withValues(alpha: 0.3)
         ..style = PaintingStyle.fill,
     );
 
@@ -182,7 +180,7 @@ class _WaterBallPainter extends CustomPainter {
     canvas.drawOval(
       Rect.fromCircle(center: center, radius: radius - 1),
       Paint()
-        ..color = waterColor.withOpacity(0.6)
+        ..color = waterColor.withValues(alpha: 0.6)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2,
     );
@@ -191,7 +189,7 @@ class _WaterBallPainter extends CustomPainter {
     canvas.drawOval(
       Rect.fromCircle(center: center, radius: radius - 4),
       Paint()
-        ..color = waterColor.withOpacity(0.15)
+        ..color = waterColor.withValues(alpha: 0.15)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 6,
     );

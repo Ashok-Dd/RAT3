@@ -46,8 +46,11 @@ class _AlertsScreenState extends State<AlertsScreen> {
               heroTag: 'clear_fab',
               onPressed: () => _confirmClear(context, ctrl),
               backgroundColor: AppTheme.backgroundElevated,
-              child: const Icon(Icons.delete_sweep_outlined,
-                  color: AppTheme.neonRed, size: 20),
+              child: const Icon(
+                Icons.delete_sweep_outlined,
+                color: AppTheme.neonRed,
+                size: 20,
+              ),
             )
           : null,
     );
@@ -66,15 +69,17 @@ class _AlertsScreenState extends State<AlertsScreen> {
             onTap: () => setState(() => _filterSeverity = null),
           ),
           const SizedBox(width: 8),
-          ...AlertSeverity.values.map((s) => Padding(
-                padding: const EdgeInsets.only(right: 8),
-                child: _FilterChip(
-                  label: s.label,
-                  isSelected: _filterSeverity == s,
-                  color: _colorForSeverity(s),
-                  onTap: () => setState(() => _filterSeverity = s),
-                ),
-              )),
+          ...AlertSeverity.values.map(
+            (s) => Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _FilterChip(
+                label: s.label,
+                isSelected: _filterSeverity == s,
+                color: _colorForSeverity(s),
+                onTap: () => setState(() => _filterSeverity = s),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -106,18 +111,26 @@ class _AlertsScreenState extends State<AlertsScreen> {
       builder: (_) => AlertDialog(
         backgroundColor: AppTheme.backgroundCard,
         title: Text('Clear All Alerts', style: AppTheme.headlineMedium),
-        content: Text('This will remove all stored alerts. Continue?',
-            style: AppTheme.bodyMedium),
+        content: Text(
+          'This will remove all stored alerts. Continue?',
+          style: AppTheme.bodyMedium,
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancel',
-                style: AppTheme.bodyMedium.copyWith(color: AppTheme.textSecondary)),
+            child: Text(
+              'Cancel',
+              style: AppTheme.bodyMedium.copyWith(
+                color: AppTheme.textSecondary,
+              ),
+            ),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Clear',
-                style: AppTheme.bodyMedium.copyWith(color: AppTheme.neonRed)),
+            child: Text(
+              'Clear',
+              style: AppTheme.bodyMedium.copyWith(color: AppTheme.neonRed),
+            ),
           ),
         ],
       ),
@@ -160,7 +173,9 @@ class _FilterChip extends StatelessWidget {
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color: isSelected ? color.withOpacity(0.2) : AppTheme.backgroundCard,
+          color: isSelected
+              ? color.withValues(alpha: 0.2)
+              : AppTheme.backgroundCard,
           borderRadius: BorderRadius.circular(4),
           border: Border.all(
             color: isSelected ? color : AppTheme.borderColor,
@@ -209,7 +224,7 @@ class _AlertCardState extends State<_AlertCard> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: CyberCard(
-        borderColor: _color.withOpacity(0.3),
+        borderColor: _color.withValues(alpha: 0.3),
         onTap: () => setState(() => _expanded = !_expanded),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -248,8 +263,10 @@ class _AlertCardState extends State<_AlertCard> {
               const SizedBox(height: 12),
               Text(
                 widget.alert.userFriendlyMessage,
-                style: AppTheme.bodyMedium
-                    .copyWith(color: AppTheme.textPrimary, height: 1.5),
+                style: AppTheme.bodyMedium.copyWith(
+                  color: AppTheme.textPrimary,
+                  height: 1.5,
+                ),
               ),
               const SizedBox(height: 8),
               Text(

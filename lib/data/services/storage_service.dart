@@ -1,8 +1,9 @@
 import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
+
 import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/core/utils/app_utils.dart';
 import 'package:rat3/data/models/app_models.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Handles all local persistent storage operations.
 /// Uses SharedPreferences as the backing store.
@@ -51,7 +52,9 @@ class StorageService {
   Future<void> saveLastScanTime(DateTime time) async {
     try {
       await _store.setString(
-          AppConstants.keyLastScanTime, time.toIso8601String());
+        AppConstants.keyLastScanTime,
+        time.toIso8601String(),
+      );
     } catch (e) {
       AppLogger.error(_tag, 'saveLastScanTime failed', e);
     }

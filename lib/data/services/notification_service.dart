@@ -27,7 +27,7 @@ class NotificationService {
       const channel = AndroidNotificationChannel(
         AppConstants.notificationChannelId,
         AppConstants.notificationChannelName,
-        description: 'Security alerts from RAT-Prevention',
+        description: 'Security alerts from RAT3',
         importance: Importance.high,
         enableLights: true,
         ledColor: Color(0xFF00FF88), // Flutter's Color, not a custom class
@@ -35,7 +35,8 @@ class NotificationService {
 
       await _plugin
           .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>()
+            AndroidFlutterLocalNotificationsPlugin
+          >()
           ?.createNotificationChannel(channel);
 
       _isInitialized = true;
@@ -57,7 +58,7 @@ class NotificationService {
       final androidDetails = AndroidNotificationDetails(
         AppConstants.notificationChannelId,
         AppConstants.notificationChannelName,
-        channelDescription: 'Security alerts from RAT-Prevention',
+        channelDescription: 'Security alerts from RAT3',
         importance: _importanceForSeverity(alert.severity),
         priority: _priorityForSeverity(alert.severity),
         color: const Color(0xFF00FF88), // Flutter Color — works correctly now
@@ -101,7 +102,7 @@ class NotificationService {
       const details = NotificationDetails(android: androidDetails);
       await _plugin.show(
         1, // Fixed ID so there's always only one monitoring notification
-        '🛡 RAT-Prevention Active',
+        '🛡 RAT3 Active',
         statusText,
         details,
       );
