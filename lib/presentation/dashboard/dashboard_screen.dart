@@ -46,13 +46,13 @@ class DashboardScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'RAT-PREVENTION',
+              'DEVICE MONITOR',
               style: AppTheme.headlineLarge.copyWith(
                 color: AppTheme.neonGreen,
                 fontSize: 20,
               ),
             ),
-            Text('POST-INSTALLATION MONITOR', style: AppTheme.labelSmall),
+            Text('LIVE RAT / SPYWARE WATCH', style: AppTheme.labelSmall),
           ],
         ),
         const Spacer(),
@@ -158,7 +158,7 @@ class DashboardScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('CONNECTIONS', style: AppTheme.labelSmall),
+                Text('LINKS', style: AppTheme.labelSmall, maxLines: 1),
                 const SizedBox(height: 6),
                 Text(
                   '${ctrl.connections.length}',

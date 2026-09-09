@@ -230,10 +230,29 @@ class ScanForegroundService : Service() {
         Log.i(TAG, "onStartCommand action=${intent?.action} interval=${scanIntervalMs/60000}min")
 
         // ── MUST call startForeground() within 5 seconds of onStartCommand ─
-        startForeground(
-            NOTIF_ID_PERSISTENT,
-            buildPersistentNotification("Monitoring active — scanning every ${scanIntervalMs/60000}min")
-        )
+        // Android 14+ forbids starting some FGS types (incl. the old dataSync) from a
+        // background trigger such as BOOT_COMPLETED. If that happens, fall back to a
+        // plain background service + an AlarmManager alarm (the alarm broadcast, when
+        // it fires, IS allowed to promote us to a foreground service).
+        try {
+            val notif = buildPersistentNotification(
+                "Monitoring active — scanning every ${scanIntervalMs/60000}min",
+            )
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(
+                    NOTIF_ID_PERSISTENT,
+                    notif,
+                    android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                )
+            } else {
+                startForeground(NOTIF_ID_PERSISTENT, notif)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "startForeground denied (${e.javaClass.simpleName}) — using alarm-only mode")
+            scheduleNextAlarm(this, scanIntervalMs)
+            stopSelf()
+            return START_NOT_STICKY
+        }
 
         // ── ACTION_RUN_SCAN from ScanAlarmReceiver (Doze wakeup path) ─────
         // The alarm fired because Doze froze our Handler.postDelayed().
