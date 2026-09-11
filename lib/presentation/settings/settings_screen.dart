@@ -79,11 +79,14 @@ class SettingsScreen extends StatelessWidget {
               children: [
                 _InfoRow(label: 'App', value: 'RAT3'),
                 const NeonDivider(),
-                _InfoRow(label: 'Version', value: '1.0.0'),
+                _InfoRow(label: 'Version', value: ctrl.appVersion),
                 const NeonDivider(),
                 _InfoRow(label: 'Platform', value: 'Flutter / Android'),
                 const NeonDivider(),
-                _InfoRow(label: 'Build', value: 'Debug build'),
+                _InfoRow(
+                  label: 'Build',
+                  value: ctrl.isReleaseBuild ? 'Release build' : 'Debug build',
+                ),
               ],
             ),
           ),

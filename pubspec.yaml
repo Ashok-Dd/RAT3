@@ -28,6 +28,9 @@ dependencies:
   # Date / number formatting
   intl: ^0.19.0
 
+  # Real app version/build number for the Settings "About" section
+  package_info_plus: ^8.1.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

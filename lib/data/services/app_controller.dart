@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/core/utils/app_utils.dart';
 import 'package:rat3/data/models/app_models.dart';
@@ -57,6 +58,14 @@ class AppController extends ChangeNotifier {
   bool _onboardingComplete = false;
   bool get onboardingComplete => _onboardingComplete;
 
+  // Real app version/build, read from the platform (not hardcoded) — shown in
+  // Settings > About. Falls back to the pubspec version if the platform
+  // channel isn't available yet (e.g. very first frame).
+  String _appVersion = '…';
+  String get appVersion => _appVersion;
+
+  bool get isReleaseBuild => kReleaseMode;
+
   Timer? _autoScanTimer;
   final List<StreamSubscription> _subs = [];
 
@@ -73,6 +82,13 @@ class AppController extends ChangeNotifier {
       _lastScanTime = storageService.loadLastScanTime();
       _isMonitoringEnabled = storageService.loadMonitoringEnabled();
       _onboardingComplete = storageService.loadOnboardingComplete();
+
+      try {
+        final info = await PackageInfo.fromPlatform();
+        _appVersion = '${info.version}+${info.buildNumber}';
+      } catch (e) {
+        AppLogger.warning(_tag, 'Could not read PackageInfo: $e');
+      }
 
       // Inject real PlatformChannelService into every layer
       runtimeMonitor = RuntimeMonitor(platform: platformService);
