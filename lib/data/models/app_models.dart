@@ -211,19 +211,31 @@ class ScanResult {
 
 // ── App Scan Result Model ──────────────────────────────────────────────────
 
-enum AppRiskLevel {
-  safe,
+/// Application Assessment — deliberately separate from the device-level
+/// [RiskLevel]. An app's trust level answers "should I be concerned about
+/// THIS app specifically", evidence-first, never from permission count or
+/// network/background activity alone. See [ScannedApp.trustReason]/[evidence]
+/// for why a given level was reached — every non-[trusted] verdict must be
+/// explainable.
+enum AppTrustLevel {
+  trusted,
+  unknown,
+  needsReview,
   suspicious,
-  malicious;
+  maliciousIndicators;
 
   String get label {
     switch (this) {
-      case AppRiskLevel.safe:
-        return 'SAFE';
-      case AppRiskLevel.suspicious:
+      case AppTrustLevel.trusted:
+        return 'TRUSTED';
+      case AppTrustLevel.unknown:
+        return 'UNKNOWN';
+      case AppTrustLevel.needsReview:
+        return 'NEEDS REVIEW';
+      case AppTrustLevel.suspicious:
         return 'SUSPICIOUS';
-      case AppRiskLevel.malicious:
-        return 'MALICIOUS';
+      case AppTrustLevel.maliciousIndicators:
+        return 'MALICIOUS INDICATORS';
     }
   }
 }
@@ -242,12 +254,14 @@ class ScannedApp {
   final int targetSdkVersion;
   final List<String> allPermissions;
   final List<String> dangerousGranted; // DANGEROUS permissions actually granted
-  final List<String> grantedHighRisk; // Subset: camera, mic, location, SMS etc.
+  final int txBytes;
+  final int rxBytes;
   final double backgroundTimeHrs; // Real foreground/bg time from UsageStats
-  final bool isCurrentlyRunning; // Real: from ActivityManager
-  final int riskScore; // 0–100 computed by Kotlin
-  final AppRiskLevel riskLevel; // SAFE / SUSPICIOUS / MALICIOUS
-  final List<String> riskSignals; // Human-readable reasons
+  final bool isCurrentlyRunning; // Real: in foreground right now (UsageEvents)
+  final AppTrustLevel trustLevel;
+  final String trustReason; // One-line headline explaining the verdict
+  final List<String> evidence; // Full "why flagged" list, empty if trusted
+  final List<String> privateDataAccess; // SMS / notifications / on-screen content
 
   const ScannedApp({
     required this.packageName,
@@ -263,20 +277,24 @@ class ScannedApp {
     required this.targetSdkVersion,
     required this.allPermissions,
     required this.dangerousGranted,
-    required this.grantedHighRisk,
+    required this.txBytes,
+    required this.rxBytes,
     required this.backgroundTimeHrs,
     required this.isCurrentlyRunning,
-    required this.riskScore,
-    required this.riskLevel,
-    required this.riskSignals,
+    required this.trustLevel,
+    required this.trustReason,
+    required this.evidence,
+    required this.privateDataAccess,
   });
 
   factory ScannedApp.fromMap(Map<String, dynamic> m) {
-    final levelStr = m['riskLevel'] as String? ?? 'SAFE';
+    final levelStr = m['trustLevel'] as String? ?? 'UNKNOWN';
     final level = switch (levelStr) {
-      'MALICIOUS' => AppRiskLevel.malicious,
-      'SUSPICIOUS' => AppRiskLevel.suspicious,
-      _ => AppRiskLevel.safe,
+      'TRUSTED' => AppTrustLevel.trusted,
+      'NEEDS_REVIEW' => AppTrustLevel.needsReview,
+      'SUSPICIOUS' => AppTrustLevel.suspicious,
+      'MALICIOUS_INDICATORS' => AppTrustLevel.maliciousIndicators,
+      _ => AppTrustLevel.unknown,
     };
     return ScannedApp(
       packageName: m['packageName'] as String? ?? '',
@@ -296,12 +314,16 @@ class ScannedApp {
       targetSdkVersion: (m['targetSdkVersion'] as num?)?.toInt() ?? 0,
       allPermissions: List<String>.from(m['allPermissions'] as List? ?? []),
       dangerousGranted: List<String>.from(m['dangerousGranted'] as List? ?? []),
-      grantedHighRisk: List<String>.from(m['grantedHighRisk'] as List? ?? []),
+      txBytes: (m['txBytes'] as num?)?.toInt() ?? 0,
+      rxBytes: (m['rxBytes'] as num?)?.toInt() ?? 0,
       backgroundTimeHrs: (m['backgroundTimeHrs'] as num?)?.toDouble() ?? 0.0,
       isCurrentlyRunning: m['isCurrentlyRunning'] as bool? ?? false,
-      riskScore: (m['riskScore'] as num?)?.toInt() ?? 0,
-      riskLevel: level,
-      riskSignals: List<String>.from(m['riskSignals'] as List? ?? []),
+      trustLevel: level,
+      trustReason: m['trustReason'] as String? ?? '',
+      evidence: List<String>.from(m['evidence'] as List? ?? []),
+      privateDataAccess: List<String>.from(
+        m['privateDataAccess'] as List? ?? [],
+      ),
     );
   }
 }

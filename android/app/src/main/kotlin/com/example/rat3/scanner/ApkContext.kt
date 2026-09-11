@@ -300,7 +300,8 @@ class ApkContext internal constructor(
             }
         }
 
-        private fun sha256Of(file: File): String {
+        /** internal (not private): reused by MainActivity's Scan-All-Apps blocklist check. */
+        internal fun sha256Of(file: File): String {
             val md = MessageDigest.getInstance("SHA-256")
             file.inputStream().use { input ->
                 val buf = ByteArray(1 shl 16)

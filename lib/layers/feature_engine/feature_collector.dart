@@ -125,9 +125,16 @@ class FeatureCollector {
     sensorIrregularity = sensorIrregularity.clamp(0, 100);
 
     // ── PERMISSIONS ───────────────────────────────────────────────────────
-    // Count across all scanned user apps
+    // Count across all scanned user apps. scanAllApps() no longer returns a
+    // separate "grantedHighRisk" list (the per-app trust engine correlates
+    // evidence instead of pre-bucketing permissions) — derive the same
+    // camera/mic/location/SMS/call-log subset from `dangerousGranted` here,
+    // for this aggregate device-level feature only.
     final dangerousPerms = _sumField(scannedApps, 'dangerousGranted');
-    final highRiskPerms = _sumField(scannedApps, 'grantedHighRisk');
+    final highRiskPerms = scannedApps.fold<int>(
+      0,
+      (s, a) => s + _highRiskCount(a),
+    );
 
     // Accessibility + device admin from security flags
     final accessibilityActive =
@@ -155,7 +162,7 @@ class FeatureCollector {
     // apps that have high-risk permissions but near-zero usage time
     int mismatchApps = 0;
     for (final app in scannedApps) {
-      final highRisk = (app['grantedHighRisk'] as List?)?.length ?? 0;
+      final highRisk = _highRiskCount(app);
       final bgTimeHrs = (app['backgroundTimeHrs'] as num?)?.toDouble() ?? 0.0;
       if (highRisk >= 2 && bgTimeHrs < 0.1) mismatchApps++;
     }
@@ -424,6 +431,25 @@ class FeatureCollector {
       if (v is int) return s + v;
       return s;
     });
+  }
+
+  // Camera/mic/location/SMS/call-log subset of DANGEROUS-protection
+  // permissions — mirrors the old Kotlin-side "grantedHighRisk" list, applied
+  // to the `dangerousGranted` field the trust engine still returns.
+  static const _highRiskPermissions = {
+    'android.permission.READ_CONTACTS',
+    'android.permission.READ_SMS',
+    'android.permission.RECORD_AUDIO',
+    'android.permission.CAMERA',
+    'android.permission.ACCESS_FINE_LOCATION',
+    'android.permission.ACCESS_BACKGROUND_LOCATION',
+    'android.permission.READ_CALL_LOG',
+    'android.permission.PROCESS_OUTGOING_CALLS',
+  };
+
+  int _highRiskCount(Map<String, dynamic> app) {
+    final granted = (app['dangerousGranted'] as List?)?.cast<String>() ?? [];
+    return granted.where(_highRiskPermissions.contains).length;
   }
 
   double _variance(List<double> values) {

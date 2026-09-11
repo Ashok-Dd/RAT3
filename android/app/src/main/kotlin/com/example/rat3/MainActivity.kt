@@ -26,11 +26,13 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.core.content.FileProvider
 import com.example.rat3.scanner.ApkContext
+import com.example.rat3.scanner.AppTrustEngine
 import com.example.rat3.scanner.DecisionEngine
 import com.example.rat3.scanner.Layer1SafetyAnalyzer
 import com.example.rat3.scanner.Layer2PermissionMismatch
 import com.example.rat3.scanner.Layer3SignatureScanner
 import com.example.rat3.scanner.Layer4MlClassifier
+import com.example.rat3.scanner.Reputation
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -204,6 +206,26 @@ class MainActivity : FlutterActivity() {
     //    • Risk signals that classify it as SAFE / SUSPICIOUS / MALICIOUS
     // ═══════════════════════════════════════════════════════════════════════
 
+    /**
+     * Scan All Apps — evidence-based Application Assessment (RAT3's per-app "trust engine").
+     *
+     * Replaces the old point-additive scorer, which flagged WhatsApp/PhonePe/Google Pay/
+     * YouTube as SUSPICIOUS/MALICIOUS purely for holding permissions and doing normal
+     * background/network activity. That scorer treated "has permission" and "is running" as
+     * risk signals; this one only escalates on evidence a legitimate app wouldn't produce:
+     *
+     *   TRUST BASELINE — a Play-Store-installed, established app with no accessibility+
+     *     overlay/admin/persistence combo is always capped at TRUSTED, no matter how many
+     *     permissions or how much network/background activity it has.
+     *   WEAK indicators (sideloaded, recent install, old target SDK…) never escalate alone.
+     *   MEDIUM indicators (Private Data Access: can read SMS / notifications / on-screen
+     *     content) reach NEEDS_REVIEW alone on an untrusted app, SUSPICIOUS with a second one.
+     *   STRONG indicators (accessibility+persistence combo, real active camera/mic on an
+     *     untrusted app, overlay+accessibility, device-admin+non-Play-Store) reach SUSPICIOUS
+     *     alone, MALICIOUS_INDICATORS with a second one.
+     *   CONFIRMED indicator (installed APK's SHA-256 matches the blocklist) is the only path
+     *     to MALICIOUS_INDICATORS on its own — reuses Layer3's [Reputation] blocklist.
+     */
     private fun handleScanAllApps(result: MethodChannel.Result) {
         Thread {
             try {
@@ -218,207 +240,95 @@ class MainActivity : FlutterActivity() {
                     pm.getInstalledPackages(flags)
                 }
 
-                // Get usage stats for cross-referencing background activity
                 val usageMap = getUsageStatsMap()
-
-                // Get running process package names
-                val am = getSystemService(ACTIVITY_SERVICE) as ActivityManager
-                val runningPkgs = am.runningAppProcesses
-                    ?.flatMap { it.pkgList?.toList() ?: emptyList<String>() }
-                    ?.toSet() ?: emptySet()
+                val aom = getSystemService(APP_OPS_SERVICE) as AppOpsManager
+                val foregroundNow = queryForegroundNowSet()
+                val notificationListenerPkgs = getEnabledNotificationListenerPackages()
+                val accessibilityActivePkgs = getActiveAccessibilityServicePackages()
+                val deviceAdminActivePkgs = getActiveDeviceAdminPackages()
+                val blocklist = try { Reputation.loadBlocklist(applicationContext) } catch (_: Exception) { emptySet() }
 
                 val results = mutableListOf<Map<String, Any?>>()
 
                 for (pkg in packages) {
                     try {
                         val appInfo = pkg.applicationInfo ?: continue
-                        val pkgNameCheck = pkg.packageName
+                        val pkgName = pkg.packageName
 
                         // ── STRICT USER-APP FILTER ──────────────────────────
-                        // Skip our own app entirely
-                        if (pkgNameCheck == packageName) continue
-
-                        // Skip ALL system apps — they are vetted by Android/OEM
+                        if (pkgName == packageName) continue
                         val isSystem = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
                         val isUpdatedSystem = (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
                         if (isSystem && !isUpdatedSystem) continue
-
-                        // Skip known safe system package prefixes even if updated
                         val systemPrefixes = listOf(
                             "com.android.", "android.", "com.google.android.gms",
                             "com.google.android.gsf", "com.google.android.webview",
                             "com.google.android.networkstack", "com.google.android.captiveportallogin",
                             "com.google.android.permissioncontroller",
                         )
-                        if (systemPrefixes.any { pkgNameCheck.startsWith(it) }) continue
+                        if (systemPrefixes.any { pkgName.startsWith(it) }) continue
 
                         val dangerousGranted = getDangerousGrantedPermissions(pkg)
+                        val allPermissions = pkg.requestedPermissions?.toList() ?: emptyList()
+                        val appName = try { pm.getApplicationLabel(appInfo).toString() } catch (_: Exception) { pkgName }
 
-                        val pkgName = pkgNameCheck
-                        val appName = try {
-                            pm.getApplicationLabel(appInfo).toString()
-                        } catch (_: Exception) { pkgName }
-
-                        // ── Install source ───────────────────────────────────
                         val installSource = getInstallSource(pkgName)
-                        val isSideloaded  = installSource == "sideloaded"
+                        val isSideloaded = installSource == "sideloaded"
+                        val isPlayStoreInstall = installSource == "play_store"
 
-                        // ── Age of install ───────────────────────────────────
-                        val installDaysAgo = (System.currentTimeMillis() - pkg.firstInstallTime) /
-                                (1000 * 60 * 60 * 24)
+                        val installDaysAgo = (System.currentTimeMillis() - pkg.firstInstallTime) / (1000 * 60 * 60 * 24)
                         val isRecentInstall = installDaysAgo < 7
 
-                        // ── All requested permissions ────────────────────────
-                        val allPermissions = pkg.requestedPermissions?.toList() ?: emptyList<String>()
-
-                        // ── Background time from UsageStats ─────────────────
                         val bgTimeMs = usageMap[pkgName] ?: 0L
                         val bgTimeHrs = bgTimeMs / 3600000.0
+                        val isInForegroundNow = foregroundNow.contains(pkgName)
 
-                        // ── Is currently running ─────────────────────────────
-                        val isRunning = runningPkgs.contains(pkgName)
+                        val uid = appInfo.uid
+                        val txBytes = TrafficStats.getUidTxBytes(uid).let { if (it >= 0) it else 0L }
+                        val rxBytes = TrafficStats.getUidRxBytes(uid).let { if (it >= 0) it else 0L }
 
-                        // ── Risk signal calculation ──────────────────────────
-                        val riskSignals = mutableListOf<String>()
-                        var riskScore   = 0
+                        // ── Real (not proxy) capability checks ───────────────
+                        val hasAccessibility = accessibilityActivePkgs.contains(pkgName)
+                        val hasDeviceAdmin = deviceAdminActivePkgs.contains(pkgName)
+                        val hasBootPersistence = allPermissions.contains("android.permission.RECEIVE_BOOT_COMPLETED")
+                        val overlayGranted = try {
+                            aom.checkOpNoThrow(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, uid, pkgName) == AppOpsManager.MODE_ALLOWED
+                        } catch (_: Exception) { false }
+                        val camActiveNow = isInForegroundNow && try {
+                            aom.checkOpNoThrow(AppOpsManager.OPSTR_CAMERA, uid, pkgName) == AppOpsManager.MODE_ALLOWED
+                        } catch (_: Exception) { false }
+                        val micActiveNow = isInForegroundNow && try {
+                            aom.checkOpNoThrow(AppOpsManager.OPSTR_RECORD_AUDIO, uid, pkgName) == AppOpsManager.MODE_ALLOWED
+                        } catch (_: Exception) { false }
 
-                        // Signal 1: Sideloaded app
-                        if (isSideloaded) {
-                            riskSignals.add("Sideloaded (not from Play Store)")
-                            riskScore += 25
+                        // ── Confirmed indicator: blocklist hash (skip the trusted fast-path
+                        // apps to avoid hashing every installed APK on every scan) ──────────
+                        val isTrusted = isPlayStoreInstall && !isRecentInstall &&
+                            !(hasAccessibility && (overlayGranted || hasDeviceAdmin || hasBootPersistence))
+                        var blocklistHit = false
+                        if (!isTrusted && blocklist.isNotEmpty()) {
+                            try {
+                                val hash = ApkContext.sha256Of(File(appInfo.sourceDir))
+                                blocklistHit = hash.lowercase() in blocklist
+                            } catch (_: Exception) {}
                         }
 
-                        // Signal 2: Dangerous permissions granted
-                        val highRiskPerms = listOf(
-                            "android.permission.READ_CONTACTS",
-                            "android.permission.READ_SMS",
-                            "android.permission.RECORD_AUDIO",
-                            "android.permission.CAMERA",
-                            "android.permission.ACCESS_FINE_LOCATION",
-                            "android.permission.ACCESS_BACKGROUND_LOCATION",
-                            "android.permission.READ_CALL_LOG",
-                            "android.permission.PROCESS_OUTGOING_CALLS",
-                            "android.permission.BIND_ACCESSIBILITY_SERVICE",
-                            "android.permission.BIND_DEVICE_ADMIN",
-                            "android.permission.INSTALL_PACKAGES",
-                            "android.permission.DELETE_PACKAGES",
+                        val assessment = AppTrustEngine.assess(
+                            AppTrustEngine.AppFacts(
+                                installSource = installSource,
+                                installDaysAgo = installDaysAgo,
+                                targetSdkVersion = appInfo.targetSdkVersion,
+                                dangerousGranted = dangerousGranted,
+                                hasAccessibility = hasAccessibility,
+                                hasDeviceAdmin = hasDeviceAdmin,
+                                hasBootPersistence = hasBootPersistence,
+                                overlayGranted = overlayGranted,
+                                camActiveNow = camActiveNow,
+                                micActiveNow = micActiveNow,
+                                hasNotificationAccess = notificationListenerPkgs.contains(pkgName),
+                                blocklistHit = blocklistHit,
+                            ),
                         )
-
-                        val grantedHighRisk = dangerousGranted.filter { it in highRiskPerms }
-                        if (grantedHighRisk.size >= 4) {
-                            riskSignals.add("Holds ${grantedHighRisk.size} high-risk permissions")
-                            riskScore += grantedHighRisk.size * 8
-                        } else if (grantedHighRisk.size >= 2) {
-                            riskSignals.add("${grantedHighRisk.size} sensitive permissions granted")
-                            riskScore += grantedHighRisk.size * 5
-                        }
-
-                        // Signal 3: Accessibility service permission — very high risk
-                        if ("android.permission.BIND_ACCESSIBILITY_SERVICE" in dangerousGranted ||
-                            allPermissions.contains("android.permission.BIND_ACCESSIBILITY_SERVICE")) {
-                            riskSignals.add("Has Accessibility Service access (can read screen content)")
-                            riskScore += 40
-                        }
-
-                        // Signal 4: Device admin permission
-                        if (allPermissions.contains("android.permission.BIND_DEVICE_ADMIN")) {
-                            riskSignals.add("Has Device Administrator privileges")
-                            riskScore += 35
-                        }
-
-                        // Signal 5: Can install/delete packages (dropper behavior)
-                        if (allPermissions.contains("android.permission.INSTALL_PACKAGES")) {
-                            riskSignals.add("Can install other apps silently")
-                            riskScore += 30
-                        }
-
-                        // Signal 6: Low target SDK (old/potentially unsafe code)
-                        if (appInfo.targetSdkVersion < 26) {
-                            riskSignals.add("Targets old Android API (${appInfo.targetSdkVersion}) — outdated security")
-                            riskScore += 15
-                        }
-
-                        // Signal 7: Recent install
-                        if (isRecentInstall) {
-                            riskSignals.add("Installed $installDaysAgo day(s) ago")
-                            riskScore += 10
-                        }
-
-                        // Signal 8: Excessive background time (> 4 hours/day)
-                        if (bgTimeHrs > 4.0 && !isSystem) {
-                            riskSignals.add("${String.format("%.1f", bgTimeHrs)}h background usage today")
-                            riskScore += 15
-                        }
-
-                        // Signal 9: Background location (very invasive)
-                        if ("android.permission.ACCESS_BACKGROUND_LOCATION" in dangerousGranted) {
-                            riskSignals.add("Tracks location in background without user interaction")
-                            riskScore += 30
-                        }
-
-                        // Signal 10: Read SMS (classic spyware signal)
-                        if ("android.permission.READ_SMS" in dangerousGranted) {
-                            riskSignals.add("Can read all your SMS messages")
-                            riskScore += 25
-                        }
-
-                        // ── REAL-TIME ACTIVITY SIGNALS ───────────────────────
-                        // These detect what your app IS DOING RIGHT NOW,
-                        // not just what permissions it has.
-
-                        // Signal 11: App is currently running in background
-                        // (process exists but app is not foreground)
-                        if (isRunning) {
-                            val importance = am.runningAppProcesses
-                                ?.firstOrNull { it.pkgList?.contains(pkgName) == true }
-                                ?.importance ?: 0
-                            // IMPORTANCE_BACKGROUND = 400, IMPORTANCE_SERVICE = 300
-                            if (importance >= 300 && importance < 100.let { it }) {
-                                riskSignals.add("Currently running in background (importance=$importance)")
-                                riskScore += 12
-                            } else if (importance > 0) {
-                                riskSignals.add("Currently active process (importance=$importance)")
-                                riskScore += 5
-                            }
-                        }
-
-                        // Signal 12: Camera permission granted AND app is running
-                        // → could be accessing camera silently
-                        if ("android.permission.CAMERA" in dangerousGranted && isRunning) {
-                            riskSignals.add("⚠ Has CAMERA access and is currently running")
-                            riskScore += 20
-                        }
-
-                        // Signal 13: Microphone permission granted AND app is running
-                        if ("android.permission.RECORD_AUDIO" in dangerousGranted && isRunning) {
-                            riskSignals.add("⚠ Has MICROPHONE access and is currently running")
-                            riskScore += 20
-                        }
-
-                        // Signal 14: Active network usage right now
-                        // TrafficStats UID check — if app has TX bytes it sent data THIS session
-                        val appUid = appInfo.uid
-                        val appTxBytes = TrafficStats.getUidTxBytes(appUid)
-                        val appRxBytes = TrafficStats.getUidRxBytes(appUid)
-                        val hasActiveNetwork = appTxBytes > 0 || appRxBytes > 0
-                        if (hasActiveNetwork) {
-                            val txMB = appTxBytes / (1024.0 * 1024.0)
-                            val rxMB = appRxBytes / (1024.0 * 1024.0)
-                            if (appTxBytes > 1024 * 1024) { // > 1MB sent
-                                riskSignals.add("Sent ${String.format("%.1f", txMB)}MB of data this session")
-                                riskScore += if (appTxBytes > 10 * 1024 * 1024) 25 else 10
-                            }
-                            if (appRxBytes > 5 * 1024 * 1024) { // > 5MB received
-                                riskSignals.add("Received ${String.format("%.1f", rxMB)}MB of data this session")
-                            }
-                        }
-
-                        // ── Risk Classification ──────────────────────────────
-                        val riskLevel = when {
-                            riskScore >= 60 -> "MALICIOUS"
-                            riskScore >= 30 -> "SUSPICIOUS"
-                            else            -> "SAFE"
-                        }
 
                         results.add(mapOf(
                             "packageName"        to pkgName,
@@ -430,28 +340,28 @@ class MainActivity : FlutterActivity() {
                             "lastUpdateTime"     to pkg.lastUpdateTime,
                             "installDaysAgo"     to installDaysAgo,
                             "isRecentInstall"    to isRecentInstall,
-                            "txBytes"            to (if (appTxBytes >= 0) appTxBytes else 0L),
-                            "rxBytes"            to (if (appRxBytes >= 0) appRxBytes else 0L),
-                            "isCurrentlyActive"  to isRunning,
+                            "txBytes"            to txBytes,
+                            "rxBytes"            to rxBytes,
                             "versionName"        to (pkg.versionName ?: "unknown"),
                             "targetSdkVersion"   to appInfo.targetSdkVersion,
                             "allPermissions"     to allPermissions,
                             "dangerousGranted"   to dangerousGranted,
-                            "grantedHighRisk"    to grantedHighRisk,
                             "backgroundTimeMs"   to bgTimeMs,
                             "backgroundTimeHrs"  to bgTimeHrs,
-                            "isCurrentlyRunning" to isRunning,
-                            "riskScore"          to riskScore,
-                            "riskLevel"          to riskLevel,
-                            "riskSignals"        to riskSignals,
+                            "isCurrentlyRunning" to isInForegroundNow,
+                            "trustLevel"         to assessment.trustLevel,
+                            "trustReason"        to assessment.trustReason,
+                            "evidence"           to assessment.evidence,
+                            "privateDataAccess"  to assessment.privateDataAccess,
+                            "sortWeight"         to assessment.sortWeight,
                         ))
                     } catch (e: Exception) {
                         Log.w(TAG, "scanAllApps: skip ${pkg.packageName}: ${e.message}")
                     }
                 }
 
-                // Sort: most dangerous first
-                results.sortByDescending { (it["riskScore"] as? Int) ?: 0 }
+                // Sort: most concerning first
+                results.sortByDescending { (it["sortWeight"] as? Int) ?: 0 }
 
                 runOnUiThread { result.success(results) }
             } catch (e: Exception) {
@@ -459,6 +369,71 @@ class MainActivity : FlutterActivity() {
                 runOnUiThread { result.error("SCAN_ERROR", e.message, null) }
             }
         }.start()
+    }
+
+    /** Packages currently in the foreground (last event within the query window was
+     *  MOVE_TO_FOREGROUND). Shared by handleScanAllApps and handleGetUserAppsUsingSensors so
+     *  "active right now" means the same thing in both places. */
+    private fun queryForegroundNowSet(): Set<String> {
+        val foregroundNow = mutableSetOf<String>()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return foregroundNow
+        try {
+            val nowMs = System.currentTimeMillis()
+            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            val events = usm?.queryEvents(nowMs - 60_000L, nowMs) ?: return foregroundNow
+            val lastEventType = mutableMapOf<String, Int>()
+            val event = android.app.usage.UsageEvents.Event()
+            while (events.hasNextEvent()) {
+                events.getNextEvent(event)
+                lastEventType[event.packageName] = event.eventType
+            }
+            for ((pkg, evType) in lastEventType) {
+                if (evType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND) foregroundNow.add(pkg)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "queryForegroundNowSet failed: ${e.message}")
+        }
+        return foregroundNow
+    }
+
+    /** Package names with an app-declared, currently-ENABLED notification listener service —
+     *  the real, no-extra-permission-needed way to check "can this app read my notifications,
+     *  including message/email previews from other apps". */
+    private fun getEnabledNotificationListenerPackages(): Set<String> {
+        return try {
+            val flat = Settings.Secure.getString(contentResolver, "enabled_notification_listeners") ?: ""
+            flat.split(":")
+                .mapNotNull { it.substringBefore('/', "").ifEmpty { null } }
+                .toSet()
+        } catch (e: Exception) {
+            Log.w(TAG, "getEnabledNotificationListenerPackages failed: ${e.message}")
+            emptySet()
+        }
+    }
+
+    /** Package names with a currently-ENABLED accessibility service (real, not just declared —
+     *  same API used by handleGetActiveAccessibilityServices/handleGetDetailedSecurityFlags). */
+    private fun getActiveAccessibilityServicePackages(): Set<String> {
+        return try {
+            val am = getSystemService(ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
+            am.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+                .mapNotNull { it.resolveInfo?.serviceInfo?.packageName }
+                .toSet()
+        } catch (e: Exception) {
+            Log.w(TAG, "getActiveAccessibilityServicePackages failed: ${e.message}")
+            emptySet()
+        }
+    }
+
+    /** Package names with active Device Administrator rights. */
+    private fun getActiveDeviceAdminPackages(): Set<String> {
+        return try {
+            val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as android.app.admin.DevicePolicyManager
+            (dpm.activeAdmins ?: emptyList()).map { it.packageName }.toSet()
+        } catch (e: Exception) {
+            Log.w(TAG, "getActiveDeviceAdminPackages failed: ${e.message}")
+            emptySet()
+        }
     }
 
     /** Returns list of DANGEROUS permissions that are actually GRANTED to the given package. */

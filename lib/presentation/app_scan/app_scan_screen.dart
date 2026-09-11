@@ -10,16 +10,37 @@ import 'package:rat3/data/services/platform_channel_service.dart';
 import 'package:rat3/widgets/common_widgets.dart';
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  AppScanScreen
+//  AppScanScreen — Application Assessment
 //
 //  Entry point: navigated to when user taps "SCAN ALL APPS" button.
 //
 //  Flow:
 //    1. Screen opens → scan starts automatically
 //    2. Progress bar + live status message shown while Kotlin scans
-//    3. Results page shown: Malicious / Suspicious / Safe tabs
-//    4. Tapping an app shows full detail sheet
+//    3. Results page shown: Malicious Indicators / Suspicious / Needs Review /
+//       Trusted tabs — each app's verdict comes with an explainable evidence
+//       list (see AppScannerService's doc comment). An app is never flagged
+//       for holding permissions, using the network, or running in the
+//       background alone — see MainActivity.handleScanAllApps in the native
+//       layer for the actual evidence/correlation rules.
+//    4. Tapping an app shows the full evidence detail sheet.
 // ─────────────────────────────────────────────────────────────────────────────
+
+Color trustColor(AppTrustLevel l) => switch (l) {
+  AppTrustLevel.maliciousIndicators => AppTheme.alertRed,
+  AppTrustLevel.suspicious => AppTheme.alertOrange,
+  AppTrustLevel.needsReview => AppTheme.neonCyan,
+  AppTrustLevel.trusted => AppTheme.neonGreen,
+  AppTrustLevel.unknown => AppTheme.textMuted,
+};
+
+IconData trustIcon(AppTrustLevel l) => switch (l) {
+  AppTrustLevel.maliciousIndicators => Icons.dangerous_rounded,
+  AppTrustLevel.suspicious => Icons.warning_amber_rounded,
+  AppTrustLevel.needsReview => Icons.search_rounded,
+  AppTrustLevel.trusted => Icons.verified_rounded,
+  AppTrustLevel.unknown => Icons.help_outline_rounded,
+};
 
 class AppScanScreen extends StatefulWidget {
   const AppScanScreen({super.key});
@@ -44,7 +65,7 @@ class _AppScanScreenState extends State<AppScanScreen>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 3, vsync: this);
+    _tabCtrl = TabController(length: 4, vsync: this);
     _scanner = AppScannerService(platform: PlatformChannelService());
 
     _subs.add(
@@ -126,7 +147,7 @@ class _AppScanScreenState extends State<AppScanScreen>
                 ),
               ),
               child: Text(
-                'APP SCAN',
+                'APP ASSESSMENT',
                 style: AppTheme.labelSmall.copyWith(
                   color: AppTheme.neonGreen,
                   letterSpacing: 2,
@@ -147,18 +168,24 @@ class _AppScanScreenState extends State<AppScanScreen>
             ? null
             : TabBar(
                 controller: _tabCtrl,
+                isScrollable: true,
                 labelColor: AppTheme.neonGreen,
                 unselectedLabelColor: AppTheme.textMuted,
                 indicatorColor: AppTheme.neonGreen,
                 labelStyle: AppTheme.labelSmall,
                 tabs: [
                   Tab(
-                    text: 'MALICIOUS (${_result?.maliciousApps.length ?? 0})',
+                    text:
+                        'MALICIOUS INDICATORS (${_result?.maliciousApps.length ?? 0})',
                   ),
                   Tab(
                     text: 'SUSPICIOUS (${_result?.suspiciousApps.length ?? 0})',
                   ),
-                  Tab(text: 'SAFE (${_result?.safeApps.length ?? 0})'),
+                  Tab(
+                    text:
+                        'NEEDS REVIEW (${_result?.needsReviewApps.length ?? 0})',
+                  ),
+                  Tab(text: 'TRUSTED (${_result?.trustedApps.length ?? 0})'),
                 ],
               ),
       ),
@@ -256,11 +283,10 @@ class _AppScanScreenState extends State<AppScanScreen>
 
   static const _steps = [
     (0.1, 'Reading installed applications'),
-    (0.4, 'Analyzing permissions and risk signals'),
+    (0.4, 'Evaluating evidence for each app'),
     (0.55, 'Reading network data usage per app'),
     (0.70, 'Enumerating device sensors'),
-    (0.80, 'Cross-referencing network and permission data'),
-    (0.90, 'Generating security alerts'),
+    (0.85, 'Generating security alerts'),
     (1.0, 'Finalizing results'),
   ];
 
@@ -374,17 +400,22 @@ class _AppScanScreenState extends State<AppScanScreen>
             children: [
               _AppListTab(
                 apps: r.maliciousApps,
-                level: AppRiskLevel.malicious,
+                level: AppTrustLevel.maliciousIndicators,
                 netUsage: r.networkUsage,
               ),
               _AppListTab(
                 apps: r.suspiciousApps,
-                level: AppRiskLevel.suspicious,
+                level: AppTrustLevel.suspicious,
                 netUsage: r.networkUsage,
               ),
               _AppListTab(
-                apps: r.safeApps,
-                level: AppRiskLevel.safe,
+                apps: r.needsReviewApps,
+                level: AppTrustLevel.needsReview,
+                netUsage: r.networkUsage,
+              ),
+              _AppListTab(
+                apps: r.trustedApps,
+                level: AppTrustLevel.trusted,
                 netUsage: r.networkUsage,
               ),
             ],
@@ -398,39 +429,63 @@ class _AppScanScreenState extends State<AppScanScreen>
     return Container(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
       color: AppTheme.backgroundSecondary,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _summaryChip(
-            r.maliciousApps.length.toString(),
-            'MALICIOUS',
-            AppTheme.alertRed,
-          ),
-          const SizedBox(width: 10),
-          _summaryChip(
-            r.suspiciousApps.length.toString(),
-            'SUSPICIOUS',
-            AppTheme.alertOrange,
-          ),
-          const SizedBox(width: 10),
-          _summaryChip(
-            r.safeApps.length.toString(),
-            'SAFE',
-            AppTheme.neonGreen,
-          ),
-          const Spacer(),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+          Row(
             children: [
-              Text(
-                '${r.totalApps} apps scanned',
-                style: AppTheme.labelSmall.copyWith(color: AppTheme.textMuted),
+              _summaryChip(
+                r.maliciousApps.length.toString(),
+                'MALICIOUS',
+                AppTheme.alertRed,
               ),
-              Text(
-                AppFormatter.formatTimeAgo(r.scannedAt),
-                style: AppTheme.labelSmall.copyWith(color: AppTheme.textMuted),
+              const SizedBox(width: 8),
+              _summaryChip(
+                r.suspiciousApps.length.toString(),
+                'SUSPICIOUS',
+                AppTheme.alertOrange,
+              ),
+              const SizedBox(width: 8),
+              _summaryChip(
+                r.needsReviewApps.length.toString(),
+                'REVIEW',
+                AppTheme.neonCyan,
+              ),
+              const SizedBox(width: 8),
+              _summaryChip(
+                r.trustedApps.length.toString(),
+                'TRUSTED',
+                AppTheme.neonGreen,
+              ),
+              const Spacer(),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '${r.totalApps} apps scanned',
+                    style: AppTheme.labelSmall.copyWith(
+                      color: AppTheme.textMuted,
+                    ),
+                  ),
+                  Text(
+                    AppFormatter.formatTimeAgo(r.scannedAt),
+                    style: AppTheme.labelSmall.copyWith(
+                      color: AppTheme.textMuted,
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
+          if (r.maliciousApps.isEmpty && r.suspiciousApps.isEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              r.needsReviewApps.isEmpty
+                  ? 'No strong indicators of RAT malware were found among the apps RAT3 can inspect.'
+                  : '${r.needsReviewApps.length} app(s) are worth a quick look — see the REVIEW tab.',
+              style: AppTheme.labelSmall.copyWith(color: AppTheme.textMuted),
+            ),
+          ],
         ],
       ),
     );
@@ -466,12 +521,12 @@ class _AppScanScreenState extends State<AppScanScreen>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  _AppListTab — shows list of apps for one risk category
+//  _AppListTab — shows list of apps for one trust category
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _AppListTab extends StatelessWidget {
   final List<ScannedApp> apps;
-  final AppRiskLevel level;
+  final AppTrustLevel level;
   final List<AppNetworkUsage> netUsage;
 
   const _AppListTab({
@@ -483,6 +538,14 @@ class _AppListTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (apps.isEmpty) {
+      final emptyText = switch (level) {
+        AppTrustLevel.maliciousIndicators =>
+          'No apps matched a known-malicious indicator',
+        AppTrustLevel.suspicious => 'No apps show suspicious indicators',
+        AppTrustLevel.needsReview => 'No apps need a closer look',
+        AppTrustLevel.trusted || AppTrustLevel.unknown =>
+          'No apps in this category',
+      };
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -494,8 +557,9 @@ class _AppListTab extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Text(
-              'No ${level.label.toLowerCase()} apps found',
+              emptyText,
               style: AppTheme.bodyLarge.copyWith(color: AppTheme.textMuted),
+              textAlign: TextAlign.center,
             ),
           ],
         ),
@@ -545,7 +609,7 @@ class _AppTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _levelColor(app.riskLevel);
+    final color = trustColor(app.trustLevel);
 
     return GestureDetector(
       onTap: onTap,
@@ -559,7 +623,7 @@ class _AppTile extends StatelessWidget {
         ),
         child: Row(
           children: [
-            // Risk score circle
+            // Trust level icon
             Container(
               width: 44,
               height: 44,
@@ -568,16 +632,7 @@ class _AppTile extends StatelessWidget {
                 color: color.withValues(alpha: 0.12),
                 border: Border.all(color: color.withValues(alpha: 0.5)),
               ),
-              child: Center(
-                child: Text(
-                  '${app.riskScore}',
-                  style: AppTheme.bodyLarge.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13,
-                  ),
-                ),
-              ),
+              child: Icon(trustIcon(app.trustLevel), color: color, size: 20),
             ),
             const SizedBox(width: 12),
 
@@ -609,7 +664,7 @@ class _AppTile extends StatelessWidget {
                             borderRadius: BorderRadius.circular(3),
                           ),
                           child: Text(
-                            'RUNNING',
+                            'IN USE',
                             style: AppTheme.labelSmall.copyWith(
                               color: AppTheme.neonGreen,
                               fontSize: 8,
@@ -629,16 +684,16 @@ class _AppTile extends StatelessWidget {
                   ),
                   const SizedBox(height: 4),
 
-                  // Top risk signal
-                  if (app.riskSignals.isNotEmpty)
-                    Text(
-                      '⚠ ${app.riskSignals.first}',
-                      style: AppTheme.bodyMedium.copyWith(
-                        color: color.withValues(alpha: 0.8),
-                        fontSize: 10,
-                      ),
-                      overflow: TextOverflow.ellipsis,
+                  // Why: trust reason (single, calm line — never "uninstall now")
+                  Text(
+                    app.trustReason,
+                    style: AppTheme.bodyMedium.copyWith(
+                      color: color.withValues(alpha: 0.85),
+                      fontSize: 10,
                     ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
+                  ),
 
                   // Tags row
                   const SizedBox(height: 6),
@@ -647,16 +702,10 @@ class _AppTile extends StatelessWidget {
                     runSpacing: 4,
                     children: [
                       if (app.isSideloaded)
-                        _tag('SIDELOADED', AppTheme.alertOrange),
+                        _tag('NOT PLAY STORE', AppTheme.alertOrange),
                       if (app.isRecentInstall) _tag('NEW', AppTheme.neonCyan),
-                      if (app.dangerousGranted.length > 3)
-                        _tag('${app.dangerousGranted.length} PERMS', color),
-                      if (netUsage != null &&
-                          netUsage!.txBytes > 5 * 1024 * 1024)
-                        _tag(
-                          '${AppFormatter.formatBytes(netUsage!.txBytes)} SENT',
-                          AppTheme.alertRed,
-                        ),
+                      if (app.privateDataAccess.isNotEmpty)
+                        _tag('PRIVATE DATA ACCESS', AppTheme.neonCyan),
                     ],
                   ),
                 ],
@@ -685,12 +734,6 @@ class _AppTile extends StatelessWidget {
       ),
     ),
   );
-
-  Color _levelColor(AppRiskLevel l) => switch (l) {
-    AppRiskLevel.malicious => AppTheme.alertRed,
-    AppRiskLevel.suspicious => AppTheme.alertOrange,
-    AppRiskLevel.safe => AppTheme.neonGreen,
-  };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -705,11 +748,7 @@ class _AppDetailSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = switch (app.riskLevel) {
-      AppRiskLevel.malicious => AppTheme.alertRed,
-      AppRiskLevel.suspicious => AppTheme.alertOrange,
-      AppRiskLevel.safe => AppTheme.neonGreen,
-    };
+    final color = trustColor(app.trustLevel);
 
     return DraggableScrollableSheet(
       initialChildSize: 0.85,
@@ -746,15 +785,10 @@ class _AppDetailSheet extends StatelessWidget {
                     color: color.withValues(alpha: 0.12),
                     border: Border.all(color: color.withValues(alpha: 0.5)),
                   ),
-                  child: Center(
-                    child: Text(
-                      '${app.riskScore}',
-                      style: AppTheme.bodyLarge.copyWith(
-                        color: color,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                      ),
-                    ),
+                  child: Icon(
+                    trustIcon(app.trustLevel),
+                    color: color,
+                    size: 24,
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -790,7 +824,7 @@ class _AppDetailSheet extends StatelessWidget {
                           ),
                         ),
                         child: Text(
-                          app.riskLevel.label,
+                          app.trustLevel.label,
                           style: AppTheme.labelSmall.copyWith(
                             color: color,
                             letterSpacing: 1.5,
@@ -805,11 +839,23 @@ class _AppDetailSheet extends StatelessWidget {
 
             const SizedBox(height: 20),
 
-            // Risk signals
-            if (app.riskSignals.isNotEmpty) ...[
-              _sectionTitle('Risk Signals', Icons.warning_amber_rounded, color),
+            // Why RAT3 reached this assessment
+            _sectionTitle('Assessment', Icons.fact_check_outlined, color),
+            const SizedBox(height: 8),
+            CyberCard(
+              borderColor: color.withValues(alpha: 0.3),
+              child: Text(
+                app.trustReason,
+                style: AppTheme.bodyMedium.copyWith(color: color),
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Evidence (only present for non-trusted apps)
+            if (app.evidence.isNotEmpty) ...[
+              _sectionTitle('Why RAT3 flagged this', Icons.list_alt, color),
               const SizedBox(height: 8),
-              ...app.riskSignals.map(
+              ...app.evidence.map(
                 (s) => Padding(
                   padding: const EdgeInsets.only(bottom: 6),
                   child: Row(
@@ -832,11 +878,54 @@ class _AppDetailSheet extends StatelessWidget {
               const SizedBox(height: 16),
             ],
 
+            // Private Data Access — shown for every app that has one of these
+            // channels, trusted or not, so the capability is always visible.
+            if (app.privateDataAccess.isNotEmpty) ...[
+              _sectionTitle(
+                'Private Data Access',
+                Icons.visibility_outlined,
+                AppTheme.neonCyan,
+              ),
+              const SizedBox(height: 8),
+              CyberCard(
+                borderColor: AppTheme.neonCyan.withValues(alpha: 0.3),
+                child: Column(
+                  children: app.privateDataAccess
+                      .map(
+                        (s) => Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(
+                                Icons.remove_red_eye_outlined,
+                                size: 14,
+                                color: AppTheme.neonCyan,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  s,
+                                  style: AppTheme.bodyMedium.copyWith(
+                                    color: AppTheme.neonCyan,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+              ),
+              const SizedBox(height: 16),
+            ],
+
             // App info
             _sectionTitle(
               'App Information',
               Icons.info_outline,
-              AppTheme.neonCyan,
+              AppTheme.textSecondary,
             ),
             const SizedBox(height: 8),
             CyberCard(
@@ -853,8 +942,8 @@ class _AppDetailSheet extends StatelessWidget {
                   _infoRow(
                     'Status',
                     app.isCurrentlyRunning
-                        ? 'Currently Running'
-                        : 'Not Running',
+                        ? 'In foreground right now'
+                        : 'Not in foreground',
                   ),
                 ],
               ),
@@ -862,7 +951,7 @@ class _AppDetailSheet extends StatelessWidget {
 
             const SizedBox(height: 16),
 
-            // Network usage
+            // Network usage — supplementary info, never a trust signal on its own
             if (netUsage != null) ...[
               _sectionTitle('Network Usage', Icons.wifi, AppTheme.neonCyan),
               const SizedBox(height: 8),
@@ -890,13 +979,12 @@ class _AppDetailSheet extends StatelessWidget {
             // Dangerous permissions granted
             if (app.dangerousGranted.isNotEmpty) ...[
               _sectionTitle(
-                'Dangerous Permissions Granted (${app.dangerousGranted.length})',
+                'Sensitive Permissions Granted (${app.dangerousGranted.length})',
                 Icons.lock_open_rounded,
-                AppTheme.alertRed,
+                AppTheme.textSecondary,
               ),
               const SizedBox(height: 8),
               CyberCard(
-                borderColor: AppTheme.alertRed.withValues(alpha: 0.3),
                 child: Column(
                   children: app.dangerousGranted
                       .map(
@@ -907,7 +995,7 @@ class _AppDetailSheet extends StatelessWidget {
                               const Icon(
                                 Icons.lock_open,
                                 size: 12,
-                                color: AppTheme.alertRed,
+                                color: AppTheme.textSecondary,
                               ),
                               const SizedBox(width: 8),
                               Expanded(
@@ -916,7 +1004,7 @@ class _AppDetailSheet extends StatelessWidget {
                                       .replaceAll('android.permission.', '')
                                       .replaceAll('_', ' '),
                                   style: AppTheme.bodyMedium.copyWith(
-                                    color: AppTheme.alertRed,
+                                    color: AppTheme.textSecondary,
                                   ),
                                 ),
                               ),
@@ -950,7 +1038,7 @@ class _AppDetailSheet extends StatelessWidget {
                                 Icons.fiber_manual_record,
                                 size: 6,
                                 color: app.dangerousGranted.contains(p)
-                                    ? AppTheme.alertRed
+                                    ? AppTheme.textSecondary
                                     : AppTheme.textMuted,
                               ),
                               const SizedBox(width: 8),
@@ -961,7 +1049,7 @@ class _AppDetailSheet extends StatelessWidget {
                                       .replaceAll('_', ' '),
                                   style: AppTheme.bodyMedium.copyWith(
                                     color: app.dangerousGranted.contains(p)
-                                        ? AppTheme.alertRed
+                                        ? AppTheme.textSecondary
                                         : AppTheme.textMuted,
                                     fontSize: 11,
                                   ),
@@ -1020,7 +1108,7 @@ class _AppDetailSheet extends StatelessWidget {
 
   String _sourceLabel(String src) => switch (src) {
     'play_store' => '✓ Google Play Store',
-    'sideloaded' => '⚠ Sideloaded (APK)',
-    _ => src.startsWith('other:') ? '? ${src.substring(6)}' : src,
+    'sideloaded' => 'Sideloaded (APK)',
+    _ => src.startsWith('other:') ? src.substring(6) : src,
   };
 }

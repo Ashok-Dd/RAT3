@@ -7,10 +7,16 @@ import 'package:rat3/data/services/platform_channel_service.dart';
 /// AppScannerService — orchestrates the full "Scan All Apps" workflow.
 ///
 /// Data sources (ALL real, no simulation):
-///   scanAllApps()       → Kotlin: permissions, install source, risk signals,
-///                          usage stats, running process check
-///   getAppNetworkUsage()→ Kotlin: real TX/RX per app via TrafficStats UID
-///   getActiveSensors()  → Kotlin: real SensorManager hardware sensor list
+///   scanAllApps()        → Kotlin: the evidence-based Application Assessment
+///                          engine (trust level + explainable evidence list,
+///                          see MainActivity.handleScanAllApps' doc comment)
+///   getAppNetworkUsage() → Kotlin: real TX/RX per app via TrafficStats UID
+///   getActiveSensors()   → Kotlin: real SensorManager hardware sensor list
+///
+/// This service does NOT compute or escalate trust on the Dart side — that
+/// correlation happens once, in Kotlin, so there is exactly one place that
+/// decides "is this app concerning" instead of two disagreeing heuristics.
+/// Alerts here are a direct, calm restatement of what Kotlin already found.
 ///
 /// Emits progress updates via stream so the UI can show a live progress bar.
 class AppScannerService {
@@ -49,12 +55,13 @@ class AppScannerService {
       // Step 1: Scan all installed apps (heaviest operation — runs on Kotlin thread)
       _emit(0.1, 'Reading installed applications…');
       final rawApps = await _platform.scanAllApps();
-      _emit(0.4, 'Analyzing permissions and risk signals…');
+      _emit(0.4, 'Evaluating evidence for each app…');
 
       final apps = rawApps.map(ScannedApp.fromMap).toList();
       AppLogger.info(_tag, 'Scanned ${apps.length} apps');
 
-      // Step 2: Real per-app network usage
+      // Step 2: Real per-app network usage (supplementary info only — never
+      // used to escalate trust; see the false-positive bug this replaced).
       _emit(0.55, 'Reading network data usage per app…');
       final rawNetUsage = await _platform.getAppNetworkUsage();
       final netUsage = rawNetUsage.map(AppNetworkUsage.fromMap).toList();
@@ -68,33 +75,36 @@ class AppScannerService {
       final rawSensors = await _platform.getActiveSensors();
       AppLogger.info(_tag, 'Sensors found: ${rawSensors.length}');
 
-      // Step 4: Cross-reference network heavy apps with scanned apps
-      // Flag any app that has high data usage AND suspicious risk level
-      _emit(0.80, 'Cross-referencing network and permission data…');
-      final enrichedApps = _enrichWithNetworkData(apps, netUsage);
+      // Step 4: Build alerts from the trust levels Kotlin already computed
+      _emit(0.85, 'Generating security alerts…');
+      final alerts = _buildAlerts(apps);
 
-      // Step 5: Build alerts from real scan findings
-      _emit(0.90, 'Generating security alerts…');
-      final alerts = _buildAlerts(enrichedApps, netUsage);
-
-      // Step 6: Categorize
+      // Step 5: Categorize
       _emit(0.97, 'Finalizing results…');
-      final malicious = enrichedApps
-          .where((a) => a.riskLevel == AppRiskLevel.malicious)
+      final malicious = apps
+          .where((a) => a.trustLevel == AppTrustLevel.maliciousIndicators)
           .toList();
-      final suspicious = enrichedApps
-          .where((a) => a.riskLevel == AppRiskLevel.suspicious)
+      final suspicious = apps
+          .where((a) => a.trustLevel == AppTrustLevel.suspicious)
           .toList();
-      final safe = enrichedApps
-          .where((a) => a.riskLevel == AppRiskLevel.safe)
+      final needsReview = apps
+          .where((a) => a.trustLevel == AppTrustLevel.needsReview)
+          .toList();
+      final trusted = apps
+          .where(
+            (a) =>
+                a.trustLevel == AppTrustLevel.trusted ||
+                a.trustLevel == AppTrustLevel.unknown,
+          )
           .toList();
 
       final result = AppScanResult(
         scannedAt: DateTime.now(),
-        totalApps: enrichedApps.length,
+        totalApps: apps.length,
         maliciousApps: malicious,
         suspiciousApps: suspicious,
-        safeApps: safe,
+        needsReviewApps: needsReview,
+        trustedApps: trusted,
         networkUsage: netUsage,
         sensorCount: rawSensors.length,
         alerts: alerts,
@@ -112,265 +122,46 @@ class AppScannerService {
     }
   }
 
-  // ── Enrich apps with network data ─────────────────────────────────────────
-
-  List<ScannedApp> _enrichWithNetworkData(
-    List<ScannedApp> apps,
-    List<AppNetworkUsage> netUsage,
-  ) {
-    // Build a lookup map
-    final netMap = <String, AppNetworkUsage>{};
-    for (final n in netUsage) {
-      netMap[n.packageName] = n;
-    }
-
-    // Apps with very high unexplained data usage get risk score boost
-    // We rebuild a modified list — ScannedApp is immutable so we recreate
-    return apps.map((app) {
-      final net = netMap[app.packageName];
-      if (net == null) return app;
-
-      // 50MB+ total data and already suspicious → escalate to malicious
-      final highData = net.totalBytes > 50 * 1024 * 1024;
-      if (highData && app.riskLevel == AppRiskLevel.suspicious) {
-        final newSignals = [
-          ...app.riskSignals,
-          'High data usage: ${AppFormatter.formatBytes(net.totalBytes)} '
-              '(${AppFormatter.formatBytes(net.txBytes)} sent)',
-        ];
-        // Rebuild with escalated risk
-        return ScannedApp(
-          packageName: app.packageName,
-          appName: app.appName,
-          isSystemApp: app.isSystemApp,
-          installSource: app.installSource,
-          isSideloaded: app.isSideloaded,
-          firstInstallTime: app.firstInstallTime,
-          lastUpdateTime: app.lastUpdateTime,
-          installDaysAgo: app.installDaysAgo,
-          isRecentInstall: app.isRecentInstall,
-          versionName: app.versionName,
-          targetSdkVersion: app.targetSdkVersion,
-          allPermissions: app.allPermissions,
-          dangerousGranted: app.dangerousGranted,
-          grantedHighRisk: app.grantedHighRisk,
-          backgroundTimeHrs: app.backgroundTimeHrs,
-          isCurrentlyRunning: app.isCurrentlyRunning,
-          riskScore: (app.riskScore + 20).clamp(0, 100),
-          riskLevel: AppRiskLevel.malicious,
-          riskSignals: newSignals,
-        );
-      }
-      return app;
-    }).toList();
-  }
-
-  // ── Build real activity-specific alerts ──────────────────────────────────
+  // ── Build alerts from the evidence Kotlin already correlated ─────────────
   //
-  // Priority order:
-  //   1. ACTIVE behavior (running + camera/mic/network RIGHT NOW) → critical
-  //   2. Background process with risk signals → high
-  //   3. Dangerous permission grants → high/medium
-  //   4. Overall risk classification → medium/high
-  //   5. Sideloaded apps summary → medium
+  // One alert per app that reached NEEDS_REVIEW or above — the severity and
+  // wording map directly from AppTrustLevel + the app's own evidence list, so
+  // there is no second scoring pass here that could disagree with Kotlin.
+  // TRUSTED and UNKNOWN apps never generate an alert, regardless of how many
+  // permissions they hold or how much data they've sent — that was the root
+  // cause of the WhatsApp/PhonePe/Google Pay/YouTube false positives.
 
-  List<AlertEvent> _buildAlerts(
-    List<ScannedApp> apps,
-    List<AppNetworkUsage> netUsage,
-  ) {
+  List<AlertEvent> _buildAlerts(List<ScannedApp> apps) {
     final alerts = <AlertEvent>[];
     final now = DateTime.now();
-    // Build net usage lookup by packageName
-    final netMap = <String, AppNetworkUsage>{};
-    for (final n in netUsage) {
-      netMap[n.packageName] = n;
-    }
 
     for (final app in apps) {
-      final net = netMap[app.packageName];
-      final hasCamera = app.dangerousGranted.contains(
-        'android.permission.CAMERA',
+      final severity = switch (app.trustLevel) {
+        AppTrustLevel.maliciousIndicators => AlertSeverity.critical,
+        AppTrustLevel.suspicious => AlertSeverity.high,
+        AppTrustLevel.needsReview => AlertSeverity.medium,
+        AppTrustLevel.trusted || AppTrustLevel.unknown => null,
+      };
+      if (severity == null) continue;
+
+      final evidenceLines = app.evidence.isEmpty
+          ? app.trustReason
+          : app.evidence.join('. ');
+
+      alerts.add(
+        AlertEvent(
+          id: 'appscan_${app.trustLevel.name}_${app.packageName}',
+          severity: severity,
+          title: '${app.trustLevel.label} — "${app.appName}"',
+          description: evidenceLines,
+          userFriendlyMessage: '"${app.appName}": $evidenceLines',
+          timestamp: now,
+          source: 'App Scanner',
+        ),
       );
-      final hasMic = app.dangerousGranted.contains(
-        'android.permission.RECORD_AUDIO',
-      );
-      final netTx = net?.txBytes ?? 0;
-      final isActive = app.isCurrentlyRunning;
-
-      // ── ACTIVE BEHAVIOR: camera running right now ─────────────────────────
-      if (isActive && hasCamera) {
-        alerts.add(
-          AlertEvent(
-            id: 'appscan_cam_active_${app.packageName}',
-            severity: AlertSeverity.critical,
-            title: '🎥 Camera Active — "${app.appName}"',
-            description:
-                '"${app.appName}" is currently running and holds CAMERA permission',
-            userFriendlyMessage:
-                '⚠ WARNING: "${app.appName}" is running RIGHT NOW and has '
-                'camera access. It may be taking photos or recording video '
-                'silently without any visible indicator.\n'
-                'Action: Settings → Apps → "${app.appName}" → Permissions → '
-                'Revoke Camera.',
-            timestamp: now,
-            source: 'App Scanner',
-          ),
-        );
-      }
-
-      // ── ACTIVE BEHAVIOR: microphone running right now ─────────────────────
-      if (isActive && hasMic) {
-        alerts.add(
-          AlertEvent(
-            id: 'appscan_mic_active_${app.packageName}',
-            severity: AlertSeverity.critical,
-            title: '🎤 Microphone Active — "${app.appName}"',
-            description:
-                '"${app.appName}" is currently running and holds RECORD_AUDIO permission',
-            userFriendlyMessage:
-                '⚠ WARNING: "${app.appName}" is running RIGHT NOW and has '
-                'microphone access. It may be recording audio or conversations '
-                'silently in the background.\n'
-                'Action: Settings → Apps → "${app.appName}" → Permissions → '
-                'Revoke Microphone.',
-            timestamp: now,
-            source: 'App Scanner',
-          ),
-        );
-      }
-
-      // ── ACTIVE BEHAVIOR: sending data right now ───────────────────────────
-      if (isActive && netTx > 512 * 1024) {
-        final severity = netTx > 5 * 1024 * 1024
-            ? AlertSeverity.critical
-            : AlertSeverity.high;
-        alerts.add(
-          AlertEvent(
-            id: 'appscan_net_active_${app.packageName}',
-            severity: severity,
-            title: '📡 Data Transmission — "${app.appName}"',
-            description:
-                '"${app.appName}" sent ${AppFormatter.formatBytes(netTx)} '
-                'while running in background',
-            userFriendlyMessage:
-                '⚠ "${app.appName}" is running and has transmitted '
-                '${AppFormatter.formatBytes(netTx)} of data. '
-                'If you are not actively using this app, it is sending '
-                'data without your interaction. This matches data '
-                'exfiltration behavior.',
-            timestamp: now,
-            source: 'App Scanner',
-          ),
-        );
-      }
-
-      // ── ACTIVE BEHAVIOR: background process with no clear reason ─────────
-      if (isActive &&
-          app.riskLevel != AppRiskLevel.safe &&
-          !hasCamera &&
-          !hasMic &&
-          netTx <= 512 * 1024) {
-        alerts.add(
-          AlertEvent(
-            id: 'appscan_bgproc_${app.packageName}',
-            severity: AlertSeverity.high,
-            title: '⚙ Suspicious Background Process — "${app.appName}"',
-            description:
-                '"${app.appName}" is running in background '
-                '(risk score ${app.riskScore}/100)',
-            userFriendlyMessage:
-                '"${app.appName}" has an active background process '
-                'and was flagged ${app.riskLevel.label}. '
-                '${app.riskSignals.isNotEmpty ? app.riskSignals.first : ""}',
-            timestamp: now,
-            source: 'App Scanner',
-          ),
-        );
-      }
-
-      // ── PERMISSION ALERTS ─────────────────────────────────────────────────
-      if (app.dangerousGranted.contains('android.permission.READ_SMS')) {
-        alerts.add(
-          AlertEvent(
-            id: 'appscan_sms_${app.packageName}',
-            severity: AlertSeverity.high,
-            title: '💬 SMS Read Access — "${app.appName}"',
-            description: '${app.appName} can read all SMS messages',
-            userFriendlyMessage:
-                '"${app.appName}" can read your SMS messages including '
-                'OTPs and bank transaction alerts. Revoke if not needed.',
-            timestamp: now,
-            source: 'App Scanner',
-          ),
-        );
-      }
-
-      if (app.dangerousGranted.contains(
-        'android.permission.ACCESS_BACKGROUND_LOCATION',
-      )) {
-        alerts.add(
-          AlertEvent(
-            id: 'appscan_bgloc_${app.packageName}',
-            severity: AlertSeverity.high,
-            title: '📍 Background Location — "${app.appName}"',
-            description: '${app.appName} tracks location when closed',
-            userFriendlyMessage:
-                '"${app.appName}" is tracking your GPS location at all '
-                'times, even when you are not using the app.',
-            timestamp: now,
-            source: 'App Scanner',
-          ),
-        );
-      }
-
-      // ── OVERALL RISK (only if no active behavior already flagged) ─────────
-      final alreadyFlagged = alerts.any(
-        (a) =>
-            a.id.contains(app.packageName) &&
-            (a.id.contains('_active_') || a.id.contains('_bgproc_')),
-      );
-
-      if (!alreadyFlagged) {
-        if (app.riskLevel == AppRiskLevel.malicious) {
-          alerts.add(
-            AlertEvent(
-              id: 'appscan_malicious_${app.packageName}',
-              severity: AlertSeverity.critical,
-              title: '🔴 Malicious App — "${app.appName}"',
-              description:
-                  'Score ${app.riskScore}/100 | '
-                  '${app.riskSignals.take(2).join(" | ")}',
-              userFriendlyMessage:
-                  '"${app.appName}" is classified as MALICIOUS '
-                  '(score: ${app.riskScore}/100). '
-                  '${app.riskSignals.isNotEmpty ? app.riskSignals.first : "Multiple risk signals"}. '
-                  'Uninstall this app immediately.',
-              timestamp: now,
-              source: 'App Scanner',
-            ),
-          );
-        } else if (app.riskLevel == AppRiskLevel.suspicious) {
-          alerts.add(
-            AlertEvent(
-              id: 'appscan_suspicious_${app.packageName}',
-              severity: AlertSeverity.high,
-              title: '🟠 Suspicious App — "${app.appName}"',
-              description:
-                  'Score ${app.riskScore}/100 | '
-                  '${app.riskSignals.take(2).join(" | ")}',
-              userFriendlyMessage:
-                  '"${app.appName}" shows suspicious characteristics '
-                  '(score: ${app.riskScore}/100). '
-                  '${app.riskSignals.isNotEmpty ? app.riskSignals.first : "Review this app"}.',
-              timestamp: now,
-              source: 'App Scanner',
-            ),
-          );
-        }
-      }
     }
 
-    // ── Sideloaded apps summary ───────────────────────────────────────────
+    // ── Sideloaded apps summary — factual, not alarming ───────────────────
     final sideloaded = apps
         .where((a) => a.isSideloaded && !a.isSystemApp)
         .toList();
@@ -379,12 +170,14 @@ class AppScannerService {
         AlertEvent(
           id: 'appscan_sideloaded_summary',
           severity: AlertSeverity.medium,
-          title: '📦 ${sideloaded.length} Sideloaded App(s)',
+          title: '${sideloaded.length} app(s) installed outside Play Store',
           description: sideloaded.map((a) => a.appName).join(', '),
           userFriendlyMessage:
-              '${sideloaded.length} app(s) installed outside Play Store: '
-              '${sideloaded.map((a) => a.appName).take(3).join(", ")}. '
-              'These bypass Google Play Protect scanning.',
+              '${sideloaded.length} app(s) were installed from outside '
+              'Play Store: ${sideloaded.map((a) => a.appName).take(3).join(", ")}. '
+              'This alone is not a problem — many legitimate apps and stores '
+              'distribute this way — but these apps bypass Play Protect '
+              'scanning, so it is worth knowing which ones they are.',
           timestamp: now,
           source: 'App Scanner',
         ),
@@ -413,7 +206,8 @@ class AppScanResult {
   final int totalApps;
   final List<ScannedApp> maliciousApps;
   final List<ScannedApp> suspiciousApps;
-  final List<ScannedApp> safeApps;
+  final List<ScannedApp> needsReviewApps;
+  final List<ScannedApp> trustedApps;
   final List<AppNetworkUsage> networkUsage;
   final int sensorCount;
   final List<AlertEvent> alerts;
@@ -423,7 +217,8 @@ class AppScanResult {
     required this.totalApps,
     required this.maliciousApps,
     required this.suspiciousApps,
-    required this.safeApps,
+    required this.needsReviewApps,
+    required this.trustedApps,
     required this.networkUsage,
     required this.sensorCount,
     required this.alerts,
@@ -434,7 +229,8 @@ class AppScanResult {
     totalApps: 0,
     maliciousApps: [],
     suspiciousApps: [],
-    safeApps: [],
+    needsReviewApps: [],
+    trustedApps: [],
     networkUsage: [],
     sensorCount: 0,
     alerts: [],
