@@ -72,16 +72,9 @@ object ScannerConfig {
         const val NETWORK_DYNAMIC_DNS_CAP = 24
     }
 
-    object Layer4 {
-        const val SPYWARE_TRIAD_POINTS = 25                    // sms + audio + location + many dangerous
-        const val OBFUSCATED_C2_POINTS = 20                    // raw IPs + obfuscation
-        const val HEAVY_PAYLOAD_POINTS = 15                    // big dex + many base64 + native libs
-        const val SMS_PLUS_SUSPICIOUS_POINTS = 15
-        const val PRIOR_LAYER_PULL = 0.30                      // weight of mean(L1,L2,L3) contribution
-
-        const val LABEL_ELEVATED = 60
-        const val LABEL_MODERATE = 30
-    }
+    // Layer 4 is the ML ensemble (scanner/ml/MlModels.kt) — its risk bands (20/40/60/80) and
+    // vote threshold (50%) live there, next to the model evaluation code they describe. This
+    // object previously held the old heuristic Layer4's constants; removed with that class.
 
     object Decision {
         const val W1 = 0.20
