@@ -102,10 +102,78 @@ class DashboardScreen extends StatelessWidget {
             'Last scan: ${ctrl.lastScanTime != null ? AppFormatter.formatTimeAgo(ctrl.lastScanTime!) : 'Never'}',
             style: AppTheme.bodyMedium,
           ),
+          const SizedBox(height: 12),
+          _buildScanSummary(ctrl.alerts, score.level),
         ],
       ),
     );
   }
+
+  // Honest, calm scan summary: what RAT3 actually found, in plain findings
+  // counts, plus an explicit statement of scope — never "no RAT found",
+  // only "no strong indicators within what RAT3 can inspect".
+  Widget _buildScanSummary(List<AlertEvent> alerts, RiskLevel level) {
+    final critical = alerts
+        .where((a) => a.severity == AlertSeverity.critical)
+        .length;
+    final high = alerts.where((a) => a.severity == AlertSeverity.high).length;
+    final medium = alerts
+        .where((a) => a.severity == AlertSeverity.medium)
+        .length;
+    final low = alerts.where((a) => a.severity == AlertSeverity.low).length;
+
+    final headline = switch (level) {
+      RiskLevel.safe =>
+        'No strong indicators of RAT malware were found within the areas RAT3 can inspect.',
+      RiskLevel.monitor =>
+        'A few minor signals are being watched — nothing conclusive yet.',
+      RiskLevel.suspicious =>
+        'Some indicators are worth reviewing — see Alerts for details.',
+      RiskLevel.highRisk =>
+        'Multiple correlated indicators were found — review Alerts soon.',
+      RiskLevel.critical =>
+        'Strong, correlated indicators of compromise were found — review Alerts now.',
+    };
+
+    return Column(
+      children: [
+        Text(
+          headline,
+          style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted),
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          alignment: WrapAlignment.center,
+          spacing: 12,
+          children: [
+            _findingChip('$critical', 'CRITICAL', AppTheme.statusCritical),
+            _findingChip('$high', 'HIGH', AppTheme.statusHighRisk),
+            _findingChip('$medium', 'MEDIUM', AppTheme.statusSuspicious),
+            _findingChip('$low', 'INFO', AppTheme.textMuted),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _findingChip(String count, String label, Color color) => Row(
+    mainAxisSize: MainAxisSize.min,
+    children: [
+      Text(
+        count,
+        style: AppTheme.bodyMedium.copyWith(
+          color: color,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+      const SizedBox(width: 3),
+      Text(
+        label,
+        style: AppTheme.labelSmall.copyWith(color: color, fontSize: 9),
+      ),
+    ],
+  );
 
   Widget _buildStatusCards(RiskScore score, AppController ctrl) {
     return Row(

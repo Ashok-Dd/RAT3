@@ -8,6 +8,14 @@ RAT3 is an **Android-only** security app with two halves:
    for remote-access-trojan / spyware behaviour (sensor abuse, data exfiltration, rogue
    accessibility services, root, sideloaded risky apps) and raises notifications.
 
+RAT3's job is to answer one question — *does this device show evidence of RAT compromise?* —
+not to manage permissions, clean storage, or flag an app for merely holding permissions or using
+the network. Every verdict is evidence-based and correlated: holding a permission, running in the
+background, or sending data is never enough on its own to call an app suspicious. See
+`AppTrustEngine.kt`'s doc comment for the full correlation ladder and `AppTrustEngineTest.kt` for
+the false-positive regression tests (WhatsApp/PhonePe/Google Pay/YouTube-shaped fixtures all
+resolve TRUSTED).
+
 Everything runs **locally and offline**. Installing an APK always goes through the system
 installer dialog — RAT3 never installs anything silently.
 
@@ -22,6 +30,11 @@ installer dialog — RAT3 never installs anything silently.
 >   (`android/key.properties`, gitignored — not committed). Without that file present, a fresh
 >   checkout's release build automatically falls back to the debug key so `assembleRelease` still
 >   works locally.
+> - "Can read your notifications" (Private Data Access) is detected via
+>   `Settings.Secure.enabled_notification_listeners` — this proves an app *can* see notification
+>   previews (including Gmail/WhatsApp/bank-app previews that pass through the notification
+>   shade), not that it has read your actual Gmail account data. Android gives no API for a
+>   third-party app to inspect another app's private data directly, and RAT3 doesn't claim to.
 
 ---
 
@@ -32,10 +45,10 @@ Five bottom-nav tabs (post-install monitor), with the pre-install scanner folded
 
 | Tab | What it shows |
 |-----|---------------|
-| **Dashboard** | Live risk ball, active/critical alert counts, connection count, risk breakdown |
+| **Dashboard** | 5-tier Device Security Status (SAFE/MONITOR/SUSPICIOUS/HIGH RISK/CRITICAL), a calm scan summary ("no strong indicators... within what RAT3 can inspect"), findings by severity, risk breakdown |
 | **Network** | Per-app upload/download bytes, flagged high-upload apps |
 | **Alerts** | Every finding from all layers, filterable by severity, with notifications |
-| **Scanner** | *Device Monitor*: manual scan, auto-scan interval, layer status, Sensor Scan, Scan All Apps. *Scan an APK*: pick an APK → 4-layer pre-install analysis |
+| **Scanner** | *Device Monitor*: manual scan, auto-scan interval, layer status, Sensor Scan, **Scan All Apps** (Application Assessment: TRUSTED/NEEDS REVIEW/SUSPICIOUS/MALICIOUS INDICATORS, each with an explainable evidence list). *Scan an APK*: pick an APK → 4-layer pre-install analysis |
 | **Settings** | Monitoring / notification toggles, **Fix permissions** (re-run onboarding), reset risk score |
 
 A first-run **onboarding** screen requests: notifications, usage access, battery-optimisation
@@ -58,10 +71,27 @@ MALICIOUS.
 ### Post-installation monitor — 5 layers
 
 Runtime Monitor (CPU / memory / processes / root, 15 s) · Network Monitor (per-app TX deltas,
-C2 indicators, 20 s) · Permission Tracker (sensitive-permission background abuse) · Alert Engine
-(dedup, persistence, notifications) · Risk Engine (60 s — a 65-signal `DeviceFeatures` snapshot
-scored by a weighted rule engine). A native **foreground service** re-runs a self-contained Kotlin
-scan every 5–180 min (default 10), survives app-kill (`START_STICKY`) and reboot (`BootReceiver`).
+C2 indicators, 20 s) · Permission Tracker (sensitive-permission background abuse, gated on the
+same "not an established Play Store app" correlation factor as Scan All Apps — see below) ·
+Alert Engine (dedup, persistence, notifications) · Risk Engine (60 s — a 65-signal
+`DeviceFeatures` snapshot scored by a weighted rule engine). A native **foreground service**
+re-runs a self-contained Kotlin scan every 5–180 min (default 10), survives app-kill
+(`START_STICKY`) and reboot (`BootReceiver`).
+
+### Application Assessment — "Scan All Apps"
+
+Per-installed-app evidence engine (`AppTrustEngine.kt`), separate from the Dashboard's device-wide
+status: a Play-Store-installed, established app with no accessibility+overlay/admin/persistence
+combination is always **TRUSTED**, regardless of permission count, network use, or background
+time — this is the fix for a real bug where WhatsApp/PhonePe/Google Pay/YouTube were flagged
+SUSPICIOUS/MALICIOUS purely for holding permissions and running in the background. Weak signals
+(sideloaded, recent install, old target SDK) never escalate alone; **Private Data Access**
+signals (can read SMS, can read notifications via `Settings.Secure.enabled_notification_listeners`,
+accessibility can read on-screen content) need one to reach NEEDS REVIEW and two for SUSPICIOUS on
+an untrusted app — shown calmly and factually, never as an "uninstall now" scare; strong signals
+(accessibility+overlay, real active camera/mic via AppOps — not just "process is running" — on an
+untrusted app, device admin) need one for SUSPICIOUS and two for MALICIOUS INDICATORS; a blocklist
+SHA-256 hash hit is the only solo path to MALICIOUS INDICATORS.
 
 ---
 
@@ -150,10 +180,13 @@ Upload an APK to run all **five** models (Stacking included) server-side.
 - `test/widget_test.dart` — shared-widget + theme smoke test
 - `test/alert_engine_test.dart` — 3-tier alert dedup + notification suppression
 - `test/rule_based_scorer_test.dart` — the real Dashboard risk-scoring engine
+- `test/scanned_app_parsing_test.dart` — the Kotlin↔Dart Scan All Apps wire format
 - `android/.../DecisionEngineTest.kt`, `ScannerUtilsTest.kt` — verdict math, JSON schema
 - `android/.../Layer1SafetyAnalyzerTest.kt`, `Layer2PermissionMismatchTest.kt`,
   `Layer3SignatureScannerTest.kt` — per-layer scoring rules (Layer3 via Robolectric, to read the
   real bundled `assets/*.json`)
+- `android/.../AppTrustEngineTest.kt` — the Scan All Apps false-positive regression suite
+  (WhatsApp/PhonePe/Google Pay/YouTube-shaped fixtures) alongside the positive-detection scenarios
 - `android/.../ml/MlEnsembleParityTest.kt` — Kotlin ML evaluators vs the Python models (±2.5 %)
 
 ---
