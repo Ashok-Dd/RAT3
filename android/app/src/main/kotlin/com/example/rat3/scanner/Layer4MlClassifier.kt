@@ -9,11 +9,12 @@ import org.json.JSONObject
 /**
  * Layer 4 — ML Malware Classifier.
  *
- * Extracts the 241-feature TUANDROMD vector from the APK and runs the five-model
- * ensemble (Random Forest, Decision Tree, AdaBoost, XGBoost, Stacking) exported
- * to `assets/ml/`. The verdict is a majority vote; the layer risk score is the
- * mean malware probability across the models — exactly like the training-time
- * Flask `ensemble_verdict`.
+ * Extracts the 241-feature TUANDROMD vector from the APK and runs the on-device
+ * 4-model ensemble (Random Forest, Decision Tree, AdaBoost, XGBoost — see
+ * [MlEnsemble]) exported to `assets/ml/`. The verdict is a majority vote; the
+ * layer risk score is the mean malware probability across the models — exactly
+ * like the training-time Flask `ensemble_verdict`. A 5th model (Stacking) exists
+ * but is server-only; see `ml/feature_schema.md` for why.
  */
 class Layer4MlClassifier(
     private val ctx: ApkContext,
@@ -56,6 +57,19 @@ class Layer4MlClassifier(
                     category = "ml_feature",
                 )
             }
+            if (ctx.manifestParseFailed) {
+                // The platform manifest parser failed, so ApkContext fell back to a raw byte
+                // scan for permissions (ApkContext.rawScanPermissions) — that scan only covers
+                // the known dangerous/suspicious permission set, not all 212 permission features
+                // the model was trained on. The prediction below is real, but ran on a degraded
+                // feature vector, so say so instead of presenting it with full confidence.
+                findings += finding(
+                    "Manifest could not be fully parsed, so some permission features may be " +
+                        "missing from the model input — treat this verdict as lower-confidence.",
+                    isWarning = true,
+                    category = "ml_feature",
+                )
+            }
 
             buildLayerJson(
                 layerName = "ML Malware Classifier",
@@ -68,6 +82,7 @@ class Layer4MlClassifier(
                     put("riskLevel", ml.riskLevel)
                     put("permissionsMatched", extraction.permissionsFound.size)
                     put("apisMatched", extraction.apisFound.size)
+                    put("featuresDegraded", ctx.manifestParseFailed)
                     put("perModel", JSONArray().apply {
                         ml.perModel.forEach {
                             put(JSONObject().apply {
@@ -97,7 +112,6 @@ class Layer4MlClassifier(
         "decision_tree" -> "Decision Tree"
         "adaboost" -> "AdaBoost"
         "xgboost" -> "XGBoost"
-        "stacking" -> "Stacking ensemble"
-        else -> id
+        else -> id // defensive: MlEnsemble only ever loads the 4 names above
     }
 }
