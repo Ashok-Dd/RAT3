@@ -8,19 +8,25 @@ import 'package:rat3/data/services/platform_channel_service.dart';
 
 /// Layer 3 – Permission Usage Tracker
 ///
-/// ALL data is REAL:
-///   permission_handler → real Android runtime permission status for THIS app
-///   UsageStatsManager  → real foreground time per app (via platform channel)
-///   getInstalledApps   → real installed package list with metadata
+/// Detects OTHER installed apps holding sensitive sensor permissions
+/// (camera / microphone / location) that are actively using them or have
+/// real background activity while holding them — and names the specific app
+/// in the alert, e.g. `"WhatsApp" used the microphone while running in the
+/// background`.
 ///
-/// Background access detection:
-///   A permission is flagged as "background abused" when:
-///     • It is granted AND
-///     • The app has non-zero foreground time in past 24h AND
-///     • It is a sensitive permission (camera, mic, location always)
-///     • AND the app was NOT recently opened by the user
+/// Data source: `PlatformChannelService.getUserInstalledSensorApps()`, which
+/// returns real **per-app** data from AppOpsManager (is the camera/mic op
+/// currently allowed for this UID) and UsageStatsManager (is this app in the
+/// foreground right now / was it recently / how many background hours).
 ///
-/// No Random(), no fake permission states.
+/// Previously this layer checked `permission_handler`'s status for *this*
+/// app's own grants (RAT3 requests none of these for detection purposes) and
+/// a permission-agnostic "how many apps used the phone a lot today" count —
+/// neither of which can identify which other app holds which permission, so
+/// every alert was generic ("an app may be...") even though the UI text
+/// implied a specific culprit had been found. This rewrite uses the per-app
+/// data the native layer already collects (also used by the "Scan All Apps"
+/// / Sensor Scan screens) so the claim and the evidence finally match.
 class PermissionTracker {
   static const String _tag = 'PermissionTracker';
 
@@ -41,201 +47,203 @@ class PermissionTracker {
   List<PermissionUsage> get lastSnapshot =>
       List.unmodifiable(_lastUsageSnapshot);
 
-  // ── Sensitive permissions to audit ────────────────────────────────────────
+  // Background time beyond which a granted high-risk sensor permission is
+  // treated as suspicious (same threshold the old heuristic used).
+  static const double _backgroundHoursThreshold = 2.0;
 
-  static final List<Permission> _sensitivePermissions = [
-    Permission.camera,
-    Permission.microphone,
-    Permission.location,
-    Permission.locationAlways,
-    Permission.contacts,
-    Permission.sms,
-    Permission.phone,
-    Permission.storage,
-    Permission.activityRecognition,
-  ];
-
-  static final Map<Permission, String> _permissionNames = {
-    Permission.camera: 'Camera',
-    Permission.microphone: 'Microphone',
-    Permission.location: 'Location (Foreground)',
-    Permission.locationAlways: 'Location (Background)',
-    Permission.contacts: 'Contacts',
-    Permission.sms: 'SMS',
-    Permission.phone: 'Phone',
-    Permission.storage: 'Storage',
-    Permission.activityRecognition: 'Activity Recognition',
-  };
-
-  // These permissions are high-risk if accessed in background
-  static const List<String> _highRiskPermissions = [
-    'Camera',
-    'Microphone',
-    'Location (Background)',
-  ];
+  static const _camera = 'android.permission.CAMERA';
+  static const _mic = 'android.permission.RECORD_AUDIO';
+  static const _bgLocation = 'android.permission.ACCESS_BACKGROUND_LOCATION';
 
   // ── Real Scan ──────────────────────────────────────────────────────────────
 
   Future<List<PermissionUsage>> performScan() async {
-    final usages = <PermissionUsage>[];
+    final rawApps = await _platform.getUserInstalledSensorApps();
 
-    // 1. Get real app usage stats to determine background app activity
-    //    This tells us which apps ran recently and for how long
-    final usageStats = await _platform.getUsageStats();
-    final usageMap = <String, int>{};
-    for (final stat in usageStats) {
-      final pkg = stat['packageName'] as String? ?? '';
-      final time = (stat['totalTimeInForeground'] as num?)?.toInt() ?? 0;
-      if (pkg.isNotEmpty) usageMap[pkg] = time;
-    }
+    var cameraGranted = 0, cameraBgHeavy = 0;
+    var micGranted = 0, micBgHeavy = 0;
+    var locGranted = 0;
+    var bgLocGranted = 0, bgLocBgHeavy = 0;
 
-    AppLogger.info(
-      _tag,
-      'Usage stats loaded: ${usageMap.length} apps with activity',
-    );
+    for (final raw in rawApps) {
+      final pkg = raw['packageName'] as String? ?? '';
+      final appName = raw['appName'] as String? ?? pkg;
+      if (pkg.isEmpty) continue;
 
-    // 2. Check each sensitive permission using real permission_handler API
-    for (final permission in _sensitivePermissions) {
-      try {
-        // Real Android permission status — no simulation
-        final status = await permission.status;
-        final isGranted = status.isGranted;
-        final isDeclared = status != PermissionStatus.permanentlyDenied;
-        final name = _permissionNames[permission] ?? permission.toString();
+      final sensors =
+          (raw['grantedSensors'] as List?)?.cast<String>() ?? const [];
+      final camActiveNow = raw['isCameraActiveNow'] as bool? ?? false;
+      final micActiveNow = raw['isMicActiveNow'] as bool? ?? false;
+      final bgHrs = (raw['backgroundTimeHrs'] as num?)?.toDouble() ?? 0.0;
 
-        // 3. Determine if this permission is being abused in background
-        //    using REAL usage stats data
-        final isBackgroundAbuse = _detectBackgroundAbuse(
-          permission: permission,
-          name: name,
-          isGranted: isGranted,
-          usageMap: usageMap,
+      final hasCamera = sensors.contains(_camera);
+      final hasMic = sensors.contains(_mic);
+      final hasBgLocation = sensors.contains(_bgLocation);
+      final hasAnyLocation = sensors.any((s) => s.contains('LOCATION'));
+
+      if (hasCamera) cameraGranted++;
+      if (hasMic) micGranted++;
+      if (hasAnyLocation) locGranted++;
+      if (hasBgLocation) bgLocGranted++;
+
+      // Tier A — the strongest signal we have: this exact app is using the
+      // camera/mic RIGHT NOW (AppOps op allowed + app in foreground).
+      if (camActiveNow) {
+        cameraBgHeavy++;
+        _emit(
+          id: 'perm_cam_active_$pkg',
+          severity: AlertSeverity.high,
+          title: 'Camera In Use',
+          description: '"$appName" is actively using the camera.',
+          userMessage:
+              '"$appName" is using your camera right now. If you did not '
+              'open it for this, close the app and review its permissions.',
         );
-
-        // 4. Calculate real usage count from apps that have this permission
-        //    and have non-zero foreground time
-        final usageCount = isGranted ? _estimateUsageCount(name, usageMap) : 0;
-
-        AppLogger.info(
-          _tag,
-          'Permission "$name": granted=$isGranted '
-          'bgAbuse=$isBackgroundAbuse usageCount=$usageCount',
+      }
+      if (micActiveNow) {
+        micBgHeavy++;
+        _emit(
+          id: 'perm_mic_active_$pkg',
+          severity: AlertSeverity.high,
+          title: 'Microphone In Use',
+          description: '"$appName" is actively using the microphone.',
+          userMessage:
+              '"$appName" is using your microphone right now. If you did '
+              'not open it for this, close the app and review its permissions.',
         );
+      }
 
-        final usage = PermissionUsage(
-          permissionName: name,
-          isDeclared: isDeclared,
-          isCurrentlyUsed: isGranted,
-          isBackgroundAccess: isBackgroundAbuse,
-          lastUsed: isGranted && usageCount > 0 ? DateTime.now() : null,
-          usageCount: usageCount,
-        );
-
-        usages.add(usage);
-
-        // Alert only on confirmed background abuse of high-risk permissions
-        if (usage.isSuspicious && _highRiskPermissions.contains(name)) {
-          _emitAlert(usage);
+      // Tier B — holds a high-risk sensor permission AND has real, sustained
+      // background time (a proxy for "ran without the user actively using it").
+      if (bgHrs > _backgroundHoursThreshold) {
+        if (hasCamera && !camActiveNow) {
+          _emit(
+            id: 'perm_cam_background_$pkg',
+            severity: AlertSeverity.medium,
+            title: 'Camera Permission + Heavy Background Use',
+            description:
+                '"$appName" holds camera access and has ${bgHrs.toStringAsFixed(1)}h '
+                'of background activity.',
+            userMessage:
+                '"$appName" can access your camera and has been running in '
+                'the background for ${bgHrs.toStringAsFixed(1)} hours. Review '
+                'whether it needs camera access.',
+          );
         }
-      } catch (e) {
-        AppLogger.warning(_tag, 'Could not check $permission: $e');
+        if (hasMic && !micActiveNow) {
+          _emit(
+            id: 'perm_mic_background_$pkg',
+            severity: AlertSeverity.medium,
+            title: 'Microphone Permission + Heavy Background Use',
+            description:
+                '"$appName" holds microphone access and has ${bgHrs.toStringAsFixed(1)}h '
+                'of background activity.',
+            userMessage:
+                '"$appName" can access your microphone and has been running '
+                'in the background for ${bgHrs.toStringAsFixed(1)} hours. '
+                'Review whether it needs microphone access.',
+          );
+        }
+        if (hasBgLocation) {
+          bgLocBgHeavy++;
+          _emit(
+            id: 'perm_bgloc_background_$pkg',
+            severity: AlertSeverity.medium,
+            title: 'Background Location + Heavy Background Use',
+            description:
+                '"$appName" holds background location access and has '
+                '${bgHrs.toStringAsFixed(1)}h of background activity.',
+            userMessage:
+                '"$appName" can track your location in the background and '
+                'has been running for ${bgHrs.toStringAsFixed(1)} hours. '
+                'Review whether it needs background location.',
+          );
+        }
       }
     }
 
-    _lastUsageSnapshot = usages;
+    final usages = <PermissionUsage>[
+      _summary('Camera', cameraGranted, cameraBgHeavy),
+      _summary('Microphone', micGranted, micBgHeavy),
+      _summary('Location', locGranted, 0),
+      _summary('Location (Background)', bgLocGranted, bgLocBgHeavy),
+      await _selfPermissionSummary(),
+    ];
 
+    AppLogger.info(
+      _tag,
+      'Scan: ${rawApps.length} apps checked — '
+      'camera=$cameraGranted mic=$micGranted location=$locGranted bgLocation=$bgLocGranted',
+    );
+
+    _lastUsageSnapshot = usages;
     if (!_permissionController.isClosed) {
       _permissionController.add(usages);
     }
-
     return usages;
   }
 
-  // ── Background Abuse Detection ─────────────────────────────────────────────
-
-  /// Real background abuse detection logic.
-  ///
-  /// A permission is considered "background abused" when:
-  ///   1. It IS granted to this app
-  ///   2. It is a high-risk permission (camera / mic / bg location)
-  ///   3. There are apps with background-level activity in usage stats
-  ///      (total time > 0 but lastTimeUsed suggests background only)
-  ///
-  /// Note: permission_handler gives status for THIS app only.
-  /// Usage stats cover all apps. We cross-reference them to detect
-  /// apps that have sensitive permissions AND background activity.
-  bool _detectBackgroundAbuse({
-    required Permission permission,
-    required String name,
-    required bool isGranted,
-    required Map<String, int> usageMap,
-  }) {
-    if (!isGranted) return false;
-    if (!_highRiskPermissions.contains(name)) return false;
-
-    // If there are apps with very long background-equivalent usage
-    // (apps active for many hours that user likely didn't open)
-    // combined with a sensitive permission being granted, flag it.
-    const twoHoursMs = 2 * 60 * 60 * 1000;
-    final suspiciousApps = usageMap.values
-        .where((time) => time > twoHoursMs)
-        .length;
-
-    // If 2+ apps have extremely high usage time while this sensitive
-    // permission is granted, it's a signal worth flagging
-    return suspiciousApps >= 2;
+  PermissionUsage _summary(String name, int grantedCount, int suspiciousCount) {
+    return PermissionUsage(
+      permissionName: name,
+      isDeclared: grantedCount > 0,
+      isCurrentlyUsed: grantedCount > 0,
+      isBackgroundAccess: suspiciousCount > 0,
+      lastUsed: suspiciousCount > 0 ? DateTime.now() : null,
+      usageCount: grantedCount,
+    );
   }
 
-  /// Estimates how many apps are actively using a given permission category
-  /// based on usage statistics. Not a precise count — an informed estimate.
-  int _estimateUsageCount(String permName, Map<String, int> usageMap) {
-    if (usageMap.isEmpty) return 0;
-    // Count apps that have any recorded foreground time as a proxy
-    // for permission-related activity
-    return usageMap.values.where((t) => t > 0).length.clamp(0, 50);
+  /// This app's OWN runtime permission grants — informational only (shown for
+  /// transparency), never used as evidence about a *different* app. Reads
+  /// status only — never requests, so a routine background scan can't pop a
+  /// permission dialog.
+  Future<PermissionUsage> _selfPermissionSummary() async {
+    try {
+      final statuses = await Future.wait([
+        Permission.camera.status,
+        Permission.microphone.status,
+        Permission.location.status,
+      ]);
+      final grantedCount = statuses.where((s) => s.isGranted).length;
+      return PermissionUsage(
+        permissionName: 'This App (RAT3)',
+        isDeclared: true,
+        isCurrentlyUsed: grantedCount > 0,
+        isBackgroundAccess: false,
+        usageCount: grantedCount,
+      );
+    } catch (e) {
+      AppLogger.warning(_tag, 'Could not read own permission status: $e');
+      return const PermissionUsage(
+        permissionName: 'This App (RAT3)',
+        isDeclared: false,
+        isCurrentlyUsed: false,
+        isBackgroundAccess: false,
+        usageCount: 0,
+      );
+    }
   }
 
   // ── Alert Emission ─────────────────────────────────────────────────────────
 
-  void _emitAlert(PermissionUsage usage) {
+  void _emit({
+    required String id,
+    required AlertSeverity severity,
+    required String title,
+    required String description,
+    required String userMessage,
+  }) {
     final alert = AlertEvent(
-      id:
-          'perm_${usage.permissionName.replaceAll(' ', '_')}_'
-          '${DateTime.now().millisecondsSinceEpoch}',
-      severity: AlertSeverity.high,
-      title: 'Sensitive Permission Background Activity',
-      description:
-          '${usage.permissionName} is granted and background app activity '
-          'was detected that correlates with potential silent access.',
-      userFriendlyMessage:
-          'Your device\'s ${usage.permissionName} permission is active, '
-          'and unusual background app activity was detected. '
-          'An app may be accessing your ${usage.permissionName.toLowerCase()} '
-          'without your knowledge. Review app permissions in Settings.',
+      id: id,
+      severity: severity,
+      title: title,
+      description: description,
+      userFriendlyMessage: userMessage,
       timestamp: DateTime.now(),
       source: 'Permission Tracker',
     );
-
     if (!_alertController.isClosed) _alertController.add(alert);
-  }
-
-  // ── Risk Contribution ──────────────────────────────────────────────────────
-
-  /// Returns 0–100 risk contribution based on real permission audit results.
-  double calculateRiskContribution() {
-    if (_lastUsageSnapshot.isEmpty) return 0;
-
-    final suspicious = _lastUsageSnapshot.where((u) => u.isSuspicious).length;
-    final granted = _lastUsageSnapshot.where((u) => u.isCurrentlyUsed).length;
-    final total = _lastUsageSnapshot.length;
-
-    // Base score: ratio of suspicious to total
-    double score = (suspicious / total) * 60;
-
-    // Bonus: many granted permissions = higher attack surface
-    if (granted > 5) score += (granted - 5) * 3.0;
-
-    return score.clamp(0, 100);
   }
 
   void dispose() {

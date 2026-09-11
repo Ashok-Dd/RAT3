@@ -11,6 +11,14 @@ class AlertEvent {
   final DateTime timestamp;
   final String source; // Which layer generated this
 
+  /// Whether AlertEngine should push an OS notification for this alert (it's
+  /// still recorded and shown in-app either way). Defaults true; a layer sets
+  /// this false when another layer is already the notifier of record for the
+  /// same real-world condition — e.g. the native background scan already
+  /// pushes for "device rooted" / "USB debugging enabled", so the Dart-side
+  /// RuntimeMonitor detecting the same thing shouldn't push a second one.
+  final bool notify;
+
   const AlertEvent({
     required this.id,
     required this.severity,
@@ -19,6 +27,7 @@ class AlertEvent {
     required this.userFriendlyMessage,
     required this.timestamp,
     required this.source,
+    this.notify = true,
   });
 
   AlertEvent copyWith({AlertSeverity? severity}) {
@@ -30,6 +39,7 @@ class AlertEvent {
       userFriendlyMessage: userFriendlyMessage,
       timestamp: timestamp,
       source: source,
+      notify: notify,
     );
   }
 
@@ -41,6 +51,7 @@ class AlertEvent {
     'userFriendlyMessage': userFriendlyMessage,
     'timestamp': timestamp.toIso8601String(),
     'source': source,
+    'notify': notify,
   };
 
   factory AlertEvent.fromJson(Map<String, dynamic> json) => AlertEvent(
@@ -51,6 +62,9 @@ class AlertEvent {
     userFriendlyMessage: json['userFriendlyMessage'] as String,
     timestamp: DateTime.parse(json['timestamp'] as String),
     source: json['source'] as String,
+    // Missing key (alerts persisted before this field existed) -> true, so
+    // old data keeps its previous (notifying) behaviour.
+    notify: json['notify'] as bool? ?? true,
   );
 }
 

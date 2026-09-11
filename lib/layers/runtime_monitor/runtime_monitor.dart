@@ -249,6 +249,12 @@ class RuntimeMonitor {
               'Root access was detected on this device. Rooted devices have '
               'significantly reduced security and are vulnerable to RAT '
               'installation and data theft.',
+          // Stable id (not event.id, which is a fresh timestamp every poll) so
+          // AlertEngine's Tier-1 dedup actually catches repeats of the same
+          // condition. notify:false — the native ScanForegroundService already
+          // pushes an OS notification for this; we still want it in-app fast.
+          id: 'runtime_rooted',
+          notify: false,
         );
         events.add(event);
       }
@@ -267,6 +273,8 @@ class RuntimeMonitor {
               'USB debugging is currently active. This allows a computer '
               'connected via USB to access your device internals. '
               'Disable it unless you are actively developing.',
+          id: 'runtime_usb_debug',
+          notify: false, // native scan already notifies for this condition
         );
         events.add(event);
       }
@@ -285,6 +293,7 @@ class RuntimeMonitor {
           userMessage:
               'Developer options are enabled. While not directly dangerous, '
               'they expose additional attack surfaces. Disable if not needed.',
+          id: 'runtime_dev_options',
         );
         events.add(event);
       }
@@ -369,50 +378,33 @@ class RuntimeMonitor {
     return event;
   }
 
+  /// @param id Stable, condition-specific alert id. Defaults to a fresh
+  ///   timestamp-based id (fine for transient events like a CPU spike) — pass
+  ///   an explicit stable id for persistent device-state conditions so
+  ///   AlertEngine's Tier-1 "seen this id already" dedup actually applies.
+  /// @param notify Whether this should push an OS notification. Defaults to
+  ///   true; set false when another layer (the native background scan) is
+  ///   already the notifier of record for this exact condition, to avoid
+  ///   duplicate pushes for the same finding.
   void _emitAlert({
     required RuntimeEvent event,
     required AlertSeverity severity,
     required String title,
     required String userMessage,
+    String? id,
+    bool notify = true,
   }) {
     final alert = AlertEvent(
-      id: 'runtime_${event.id}',
+      id: id ?? 'runtime_${event.id}',
       severity: severity,
       title: title,
       description: event.details,
       userFriendlyMessage: userMessage,
       timestamp: event.timestamp,
       source: 'Runtime Monitor',
+      notify: notify,
     );
     if (!_alertController.isClosed) _alertController.add(alert);
-  }
-
-  /// Real risk contribution based on actual event history (0–100).
-  double calculateRiskContribution() {
-    final recent = _eventHistory
-        .where((e) => DateTime.now().difference(e.timestamp).inMinutes < 60)
-        .toList();
-    if (recent.isEmpty) return 0;
-
-    double score = 0;
-    for (final e in recent) {
-      switch (e.type) {
-        case RuntimeEventType.cpuSpike:
-          score += (e.value / 100) * 35;
-        case RuntimeEventType.backgroundExecution:
-          score += (e.value / 120).clamp(0, 1) * 20;
-        case RuntimeEventType.serviceRestart:
-          // value 1=root(+40), 2=usbDebug(+25), 3=devOptions(+10)
-          score += e.value == 1
-              ? 40
-              : e.value == 2
-              ? 25
-              : 10;
-        case RuntimeEventType.memoryAnomaly:
-          score += (e.value / 100) * 20;
-      }
-    }
-    return score.clamp(0, 100);
   }
 
   void dispose() {

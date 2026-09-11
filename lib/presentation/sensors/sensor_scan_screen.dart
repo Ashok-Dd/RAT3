@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/core/theme/app_theme.dart';
 import 'package:rat3/data/services/platform_channel_service.dart';
 
@@ -43,7 +44,7 @@ class _SensorScanScreenState extends State<SensorScanScreen> {
   // not pre-loaded system apps, not ROM components.
   // We use the isSystemApp flag from Kotlin (FLAG_SYSTEM check)
   // plus a small blocklist for updated system apps that slip through.
-  static const _selfPkg = 'com.example.rat3';
+  static const _selfPkg = AppConstants.selfPackageName;
   static const List<String> _alwaysSkip = [
     // Google core services that are "updated system apps" but not user apps
     'com.google.android.gms',

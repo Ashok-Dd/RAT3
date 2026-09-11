@@ -6,11 +6,12 @@ import 'package:rat3/data/services/platform_channel_service.dart';
 
 /// Layer 2 – Network Traffic Analyzer
 ///
-/// Primary source: TrafficStats per-app UID (works on ALL Android versions)
-/// Secondary source: /proc/net/tcp (Android 9 and below only)
-///
-/// On Android 10+ /proc/net/tcp is restricted but TrafficStats UID data
-/// is always available — so the network tab will ALWAYS show real data.
+/// Primary source: per-app network usage via `getAppNetworkUsage()` — the native
+/// side prefers NetworkStatsManager (accurate, needs "usage access") and falls
+/// back to TrafficStats (which can silently read 0 on some devices/kernels; the
+/// native layer clamps negative "unsupported" reads to 0 rather than dropping
+/// the app, so a quiet device just shows 0 bytes instead of nothing).
+/// Secondary source: /proc/net/tcp (Android 9 and below only).
 ///
 /// For the test app detection:
 ///   When your test app clicks "start network" → it sends data to an IP.
@@ -113,7 +114,7 @@ class NetworkMonitor {
 
       // ── Self + system exclusion list ────────────────────────────────────
       // NEVER report on our own app under any circumstances
-      const selfPackage = 'com.example.rat3';
+      const selfPackage = AppConstants.selfPackageName;
 
       // Skip all well-known system / Google infrastructure packages
       bool shouldSkip(String pkg) {
@@ -375,27 +376,6 @@ class NetworkMonitor {
     final last = addrPort.lastIndexOf(':');
     if (last < 0) return 0;
     return int.tryParse(addrPort.substring(last + 1)) ?? 0;
-  }
-
-  // ── Risk Contribution ──────────────────────────────────────────────────────
-
-  double calculateRiskContribution() {
-    final recent = _detectedConnections
-        .where((c) => DateTime.now().difference(c.detectedAt).inHours < 1)
-        .toList();
-    if (recent.isEmpty) return 0;
-    double score = 0;
-    for (final c in recent) {
-      switch (c.category) {
-        case TrafficCategory.malicious:
-          score += 50;
-        case TrafficCategory.suspicious:
-          score += 10;
-        case TrafficCategory.safe:
-          break;
-      }
-    }
-    return score.clamp(0, 100);
   }
 
   void dispose() {

@@ -6,6 +6,10 @@ class AppConstants {
   static const String appName = 'RAT3';
   static const String appVersion = '1.0.0';
 
+  // This app's own Android package — single source of truth so "never report
+  // on ourselves" checks can't drift out of sync across files.
+  static const String selfPackageName = 'com.example.rat3';
+
   // Risk Score Thresholds
   static const int safeThreshold = 30;
   static const int suspiciousThreshold = 60;

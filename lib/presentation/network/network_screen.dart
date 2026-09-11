@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/core/theme/app_theme.dart';
 import 'package:rat3/core/utils/app_utils.dart';
 import 'package:rat3/data/services/platform_channel_service.dart';
@@ -60,7 +61,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
     'com.google.android.connectivity',
     'com.google.android.ext.',
     'com.android.vending',
-    'com.example.rat3',
+    AppConstants.selfPackageName,
   ];
 
   bool _skip(String pkg) =>

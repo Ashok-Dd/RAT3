@@ -143,6 +143,7 @@ class AlertEngine {
     }
 
     if (_notificationsEnabled &&
+        alert.notify &&
         alert.severity.index >= AlertSeverity.medium.index) {
       _notificationService.showAlertNotification(alert);
     }
