@@ -18,7 +18,10 @@ installer dialog — RAT3 never installs anything silently.
 >   training set that can't be bundled compactly. See `ml/feature_schema.md`.
 > - The monitor needs `QUERY_ALL_PACKAGES` and `PACKAGE_USAGE_STATS` to see other apps. This is a
 >   **sideload / enterprise** posture, not a Play-Store-friendly one.
-> - The "release" build is still debug-signed. A production keystore is future work.
+> - The release build is minified (R8) and signed with a real upload keystore
+>   (`android/key.properties`, gitignored — not committed). Without that file present, a fresh
+>   checkout's release build automatically falls back to the debug key so `assembleRelease` still
+>   works locally.
 
 ---
 
@@ -108,7 +111,13 @@ flutter analyze                       # 0 issues
 flutter test                          # Dart tests
 (cd android && ./gradlew :app:testDebugUnitTest)   # Kotlin tests (incl. ML parity)
 flutter build apk --debug
+flutter build apk --release           # minified, real-signed if android/key.properties exists
+flutter build appbundle --release     # for Play Store upload
 ```
+
+Bump the version before a release build: `version:` in `pubspec.yaml` is `<versionName>+<versionCode>`
+(e.g. `1.1.0+2`) — Android reads both straight from it, so there's nothing to change in Gradle.
+Always increment `versionCode` (the number after `+`); Play Store rejects a re-upload that doesn't.
 
 ### On a physical phone
 
@@ -139,7 +148,12 @@ Upload an APK to run all **five** models (Stacking included) server-side.
 
 - `test/scan_result_parsing_test.dart` — channel JSON parsing
 - `test/widget_test.dart` — shared-widget + theme smoke test
+- `test/alert_engine_test.dart` — 3-tier alert dedup + notification suppression
+- `test/rule_based_scorer_test.dart` — the real Dashboard risk-scoring engine
 - `android/.../DecisionEngineTest.kt`, `ScannerUtilsTest.kt` — verdict math, JSON schema
+- `android/.../Layer1SafetyAnalyzerTest.kt`, `Layer2PermissionMismatchTest.kt`,
+  `Layer3SignatureScannerTest.kt` — per-layer scoring rules (Layer3 via Robolectric, to read the
+  real bundled `assets/*.json`)
 - `android/.../ml/MlEnsembleParityTest.kt` — Kotlin ML evaluators vs the Python models (±2.5 %)
 
 ---
@@ -149,5 +163,8 @@ Upload an APK to run all **five** models (Stacking included) server-side.
 - Port Stacking on-device (quantised KNN matrix) or retrain a single strong model.
 - Retrain on a fresher corpus (AndroZoo + VirusTotal); TUANDROMD is dated.
 - Real DEX parser for feature extraction (currently a string scan).
-- Production release keystore + R8; live blocklist / cert-reputation feeds.
-- Play-compliant package-visibility instead of `QUERY_ALL_PACKAGES`.
+- Live blocklist / cert-reputation feeds (`assets/blocklist.json` and `trusted_certs.json` ship
+  with placeholder hashes only — see each file's `_comment`).
+- Play Store publish-readiness (deliberately not started): Play-compliant package-visibility
+  instead of `QUERY_ALL_PACKAGES`, Data Safety form, hosted privacy policy, real app icon,
+  Crashlytics, Play App Signing enrollment.
