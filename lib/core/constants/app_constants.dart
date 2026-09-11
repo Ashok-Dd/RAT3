@@ -10,10 +10,13 @@ class AppConstants {
   // on ourselves" checks can't drift out of sync across files.
   static const String selfPackageName = 'com.example.rat3';
 
-  // Risk Score Thresholds
-  static const int safeThreshold = 30;
-  static const int suspiciousThreshold = 60;
-  static const int dangerThreshold = 80;
+  // Device Security Status thresholds (0-100 composite from RuleBasedScorer).
+  // Five tiers instead of three: a single suspicious-looking signal shouldn't
+  // read the same as multiple correlated strong ones.
+  static const int monitorThreshold = 20;
+  static const int suspiciousThreshold = 40;
+  static const int highRiskThreshold = 60;
+  static const int criticalThreshold = 80;
 
   // Scan Intervals (in minutes)
   static const List<int> scanIntervals = [5, 10, 15, 30, 60, 120, 180];
@@ -43,20 +46,30 @@ class AppConstants {
   static const String backgroundTaskId = 'rat_prevention_bg_scan';
 }
 
-/// Risk level enum with display labels
+/// Device Security Status — "does this device currently show evidence of RAT
+/// compromise?" Deliberately separate from [AppTrustLevel] (app_models.dart),
+/// which answers "should I be concerned about THIS app". Five tiers so a
+/// single suspicious-looking signal doesn't read the same as several
+/// correlated strong ones.
 enum RiskLevel {
   safe,
+  monitor,
   suspicious,
-  dangerous;
+  highRisk,
+  critical;
 
   String get label {
     switch (this) {
       case RiskLevel.safe:
         return 'SAFE';
+      case RiskLevel.monitor:
+        return 'MONITOR';
       case RiskLevel.suspicious:
-        return 'WARNING';
-      case RiskLevel.dangerous:
-        return 'DANGER';
+        return 'SUSPICIOUS';
+      case RiskLevel.highRisk:
+        return 'HIGH RISK';
+      case RiskLevel.critical:
+        return 'CRITICAL';
     }
   }
 }

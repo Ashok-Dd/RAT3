@@ -642,6 +642,14 @@ class MainActivity : FlutterActivity() {
                         val bgTimeMs  = usageMap[pkgName] ?: 0L
                         val bgTimeHrs = bgTimeMs / 3600000.0
 
+                        // Install provenance — lets PermissionTracker require the same
+                        // "not an established Play Store app" correlation factor the
+                        // Scan All Apps trust engine uses, instead of alerting on
+                        // background sensor permission + hours alone.
+                        val installSource = getInstallSource(pkgName)
+                        val installDaysAgo = (System.currentTimeMillis() - pkg.firstInstallTime) / (1000 * 60 * 60 * 24)
+                        val isRecentInstall = installDaysAgo < 7
+
                         if (isCameraActiveNow || isMicActiveNow) {
                             Log.d(TAG, "🔴 ACTIVE: $pkgName cam=$isCameraActiveNow mic=$isMicActiveNow")
                         }
@@ -659,6 +667,8 @@ class MainActivity : FlutterActivity() {
                             "isCameraRecent"        to isCameraRecent,
                             "isMicRecent"           to isMicRecent,
                             "isLocationRecent"      to isLocationRecent,
+                            "installSource"         to installSource,
+                            "isRecentInstall"       to isRecentInstall,
                         ))
                     } catch (e: Exception) {
                         Log.w(TAG, "Skip ${pkg.packageName}: ${e.message}")

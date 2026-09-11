@@ -34,6 +34,16 @@ class AppTheme {
   static const Color colorSuspicious = neonOrange;
   static const Color colorDangerous = neonRed;
 
+  // Device Security Status (5-tier RiskLevel) — kept distinct from
+  // colorSafe/colorSuspicious/colorDangerous above, which stay 3-tier for the
+  // pre-install per-layer score coloring (riskColor(int)) so that generic
+  // use isn't affected by the Dashboard's finer-grained taxonomy.
+  static const Color statusSafe = neonGreen;
+  static const Color statusMonitor = neonCyan;
+  static const Color statusSuspicious = neonYellow;
+  static const Color statusHighRisk = neonOrange;
+  static const Color statusCritical = neonRed;
+
   /// Colour for a 0–100 risk score. Single source of truth for risk tinting.
   static Color riskColor(int score) {
     if (score <= 30) return colorSafe;

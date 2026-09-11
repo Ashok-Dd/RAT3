@@ -27,6 +27,15 @@ import 'package:rat3/data/services/platform_channel_service.dart';
 /// implied a specific culprit had been found. This rewrite uses the per-app
 /// data the native layer already collects (also used by the "Scan All Apps"
 /// / Sensor Scan screens) so the claim and the evidence finally match.
+///
+/// Correlation gate: an established Play-Store app (e.g. WhatsApp) using its
+/// camera/mic or holding background sensor access is normal — it never
+/// generates an alert here, only contributes to the informational summary.
+/// The same real-time camera/mic and background-hours signals only become an
+/// alert for an app that ALSO isn't from Play Store or was installed
+/// recently — the same trust-baseline correlation `AppTrustEngine` (Kotlin)
+/// uses for Scan All Apps, so this layer doesn't reintroduce a single-signal
+/// false positive next to the one that was just fixed there.
 class PermissionTracker {
   static const String _tag = 'PermissionTracker';
 
@@ -75,6 +84,8 @@ class PermissionTracker {
       final camActiveNow = raw['isCameraActiveNow'] as bool? ?? false;
       final micActiveNow = raw['isMicActiveNow'] as bool? ?? false;
       final bgHrs = (raw['backgroundTimeHrs'] as num?)?.toDouble() ?? 0.0;
+      final installSource = raw['installSource'] as String? ?? 'unknown';
+      final isRecentInstall = raw['isRecentInstall'] as bool? ?? false;
 
       final hasCamera = sensors.contains(_camera);
       final hasMic = sensors.contains(_mic);
@@ -85,6 +96,12 @@ class PermissionTracker {
       if (hasMic) micGranted++;
       if (hasAnyLocation) locGranted++;
       if (hasBgLocation) bgLocGranted++;
+
+      // Correlation gate: an established Play-Store app is normal, no matter
+      // what it's doing with its own granted sensors — only alert when the
+      // app ALSO isn't from Play Store or is newly installed.
+      final isTrustedApp = installSource == 'play_store' && !isRecentInstall;
+      if (isTrustedApp) continue;
 
       // Tier A — the strongest signal we have: this exact app is using the
       // camera/mic RIGHT NOW (AppOps op allowed + app in foreground).

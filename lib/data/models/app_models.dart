@@ -177,12 +177,6 @@ class RiskScore {
     permissionContribution: 0,
     calculatedAt: DateTime.now(),
   );
-
-  RiskLevel get computedLevel {
-    if (score <= AppConstants.safeThreshold) return RiskLevel.safe;
-    if (score <= AppConstants.suspiciousThreshold) return RiskLevel.suspicious;
-    return RiskLevel.dangerous;
-  }
 }
 
 // ── Scan Result ────────────────────────────────────────────────────────────

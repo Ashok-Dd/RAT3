@@ -92,11 +92,15 @@ class RiskLevelBadge extends StatelessWidget {
   Color get _color {
     switch (level) {
       case RiskLevel.safe:
-        return AppTheme.colorSafe;
+        return AppTheme.statusSafe;
+      case RiskLevel.monitor:
+        return AppTheme.statusMonitor;
       case RiskLevel.suspicious:
-        return AppTheme.colorSuspicious;
-      case RiskLevel.dangerous:
-        return AppTheme.colorDangerous;
+        return AppTheme.statusSuspicious;
+      case RiskLevel.highRisk:
+        return AppTheme.statusHighRisk;
+      case RiskLevel.critical:
+        return AppTheme.statusCritical;
     }
   }
 

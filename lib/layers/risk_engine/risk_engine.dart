@@ -145,9 +145,11 @@ class RiskEngine {
   }
 
   RiskLevel _levelForScore(int score) {
-    if (score <= AppConstants.safeThreshold) return RiskLevel.safe;
-    if (score <= AppConstants.suspiciousThreshold) return RiskLevel.suspicious;
-    return RiskLevel.dangerous;
+    if (score <= AppConstants.monitorThreshold) return RiskLevel.safe;
+    if (score <= AppConstants.suspiciousThreshold) return RiskLevel.monitor;
+    if (score <= AppConstants.highRiskThreshold) return RiskLevel.suspicious;
+    if (score <= AppConstants.criticalThreshold) return RiskLevel.highRisk;
+    return RiskLevel.critical;
   }
 
   void dispose() {
