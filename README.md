@@ -46,7 +46,7 @@ Five bottom-nav tabs (post-install monitor), with the pre-install scanner folded
 | Tab | What it shows |
 |-----|---------------|
 | **Dashboard** | 5-tier Device Security Status (SAFE/MONITOR/SUSPICIOUS/HIGH RISK/CRITICAL), a calm scan summary ("no strong indicators... within what RAT3 can inspect"), findings by severity, risk breakdown |
-| **Network** | Per-app upload/download bytes, flagged high-upload apps |
+| **Network** | Process-level connection monitor (off by default — see below): real remote IP/port/protocol/persistence per app via a local VPN. Falls back to an aggregate per-app byte-usage list (clearly labeled supplementary) when the monitor isn't enabled |
 | **Alerts** | Every finding from all layers, filterable by severity, with notifications |
 | **Scanner** | *Device Monitor*: manual scan, auto-scan interval, layer status, Sensor Scan, **Scan All Apps** (Application Assessment: TRUSTED/NEEDS REVIEW/SUSPICIOUS/MALICIOUS INDICATORS, each with an explainable evidence list). *Scan an APK*: pick an APK → 4-layer pre-install analysis |
 | **Settings** | Monitoring / notification toggles, **Fix permissions** (re-run onboarding), reset risk score |
@@ -93,6 +93,31 @@ an untrusted app — shown calmly and factually, never as an "uninstall now" sca
 untrusted app, device admin) need one for SUSPICIOUS and two for MALICIOUS INDICATORS; a blocklist
 SHA-256 hash hit is the only solo path to MALICIOUS INDICATORS.
 
+### Real-Time Connection Monitor — Network tab
+
+Off by default (Network tab toggle — requires the system VPN consent dialog). The Network tab's
+previous data source (`/proc/net/tcp`, `MainActivity.handleGetNetworkConnections`) is **blocked by
+SELinux for third-party apps on Android 10+** and silently returns nothing on a modern device —
+there is no way to see real per-connection remote IP/port/protocol without a local VPN
+(`RatVpnService.kt` + `ConnectivityManager.getConnectionOwnerUid`, the API built for exactly this).
+
+`ConnectionMonitor` (Dart) correlates the same way the App Trust Engine does — a single ordinary
+connection is never flagged, no matter how much data it moves:
+- **NORMAL**: everything else, including a trusted app's routine HTTPS traffic.
+- **NEEDS INVESTIGATION**: exactly one signal — persistent/repeated communication with the same
+  endpoint, a known suspicious port, a known-bad IP range, or the owning app already flagged by
+  the last Scan All Apps run.
+- **SUSPICIOUS**: two or more of those signals correlated together.
+
+**Technical risk, stated plainly**: keeping the device's internet working while inspecting every
+connection means `TcpRelay.kt` has to terminate the client's TCP connection at the tun interface
+and re-originate it via a protected socket — real, if deliberately simplified (no retransmission/
+congestion-window logic — reasonable since the tun↔kernel path isn't a lossy link, but this is
+**not** a general-purpose VPN client). See `TcpRelay.kt`'s doc comment. `IpPacketTest.kt` verifies
+the packet-level checksums are correct (a wrong one silently drops every relayed packet with no
+visible error), but only a live device confirms the relay itself keeps browsing/calls/streaming
+working — see Verification below.
+
 ---
 
 ## Architecture
@@ -105,8 +130,8 @@ lib/
     models/app_models.dart
     services/  app_controller (orchestrator) · platform_channel_service ·
                notification_service · storage_service · app_scanner_service
-  layers/  runtime_monitor · network_monitor · permission_tracker ·
-           alert_engine · risk_engine · feature_engine
+  layers/  runtime_monitor · network_monitor · connection_monitor ·
+           permission_tracker · alert_engine · risk_engine · feature_engine
   presentation/  app_shell · onboarding · dashboard · network · alerts ·
                  scanner (segmented) · sensors · app_scan · settings
   features/apk_scan/  apk_scan_landing · scanning_screen · result_screen ·
@@ -117,7 +142,10 @@ android/app/src/main/kotlin/com/example/rat3/
   MainActivity.kt          five channels: /security (monitor) + /scanner /file /install /progress
   ScanForegroundService.kt · ScanAlarmReceiver.kt · BootReceiver.kt
   scanner/  ApkContext (parse once) · Layer1-3 · Layer4MlClassifier · DecisionEngine ·
-            Signatures · Reputation · ScannerConfig · ScannerUtils · ml/{MlModels,TuandromdFeatures}
+            AppTrustEngine · Signatures · Reputation · ScannerConfig · ScannerUtils ·
+            ml/{MlModels,TuandromdFeatures}
+  vpn/      RatVpnService · IpPacket · TcpRelay · UdpRelay · ConnectionTracker
+            (off-by-default real-time connection monitor — see above)
 android/app/src/main/assets/
   signatures.json · blocklist.json · trusted_certs.json · ml/*.json (exported models)
 
@@ -188,6 +216,15 @@ Upload an APK to run all **five** models (Stacking included) server-side.
 - `android/.../AppTrustEngineTest.kt` — the Scan All Apps false-positive regression suite
   (WhatsApp/PhonePe/Google Pay/YouTube-shaped fixtures) alongside the positive-detection scenarios
 - `android/.../ml/MlEnsembleParityTest.kt` — Kotlin ML evaluators vs the Python models (±2.5 %)
+- `test/connection_monitor_test.dart` — the connection-correlation rules (one signal never
+  escalates past NEEDS INVESTIGATION, two reach SUSPICIOUS)
+- `android/.../vpn/IpPacketTest.kt` — IPv4/TCP/UDP packet build+parse round-trips and
+  self-verifying checksum math (a wrong checksum silently drops every relayed packet on-device)
+
+**Not yet done — needs a live device**: confirm the VPN relay keeps browsing/calls/streaming
+working while active, and that the connection list populates with real IP/port/protocol entries.
+`TcpRelay.kt` is unit-testable at the packet level but its actual relay behavior can only be
+proven on-device.
 
 ---
 
@@ -198,6 +235,10 @@ Upload an APK to run all **five** models (Stacking included) server-side.
 - Real DEX parser for feature extraction (currently a string scan).
 - Live blocklist / cert-reputation feeds (`assets/blocklist.json` and `trusted_certs.json` ship
   with placeholder hashes only — see each file's `_comment`).
+- `TcpRelay.kt` has no retransmission/congestion-window logic (see its doc comment) — fine for a
+  monitoring tool given the tun↔kernel path isn't a lossy link, but worth hardening if real-world
+  use turns up connection drops on flaky networks.
+- IPv6 is out of scope for the connection monitor (IPv4 only) — dropped explicitly, not misparsed.
 - Play Store publish-readiness (deliberately not started): Play-compliant package-visibility
   instead of `QUERY_ALL_PACKAGES`, Data Safety form, hosted privacy policy, real app icon,
   Crashlytics, Play App Signing enrollment.

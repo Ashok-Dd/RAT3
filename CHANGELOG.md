@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.2.0+3
+
+A full redirection of the post-install monitor onto RAT-specific evidence, away from generic
+"phone manager" behavior — prompted by a real bug report: WhatsApp, PhonePe, Google Pay, and
+YouTube were being flagged SUSPICIOUS/MALICIOUS by the "Scan All Apps" feature.
+
+### Fixed
+- **The reported bug.** `handleScanAllApps` computed a per-app score by adding points for
+  holding permissions and doing normal background/network activity — any messaging, payment, or
+  streaming app could trivially cross the "MALICIOUS" threshold just by existing. Replaced with
+  `AppTrustEngine.kt`: a Play-Store-installed, established app with no accessibility+overlay/
+  admin/persistence combination is always TRUSTED, regardless of permission count or activity.
+  Regression-tested directly (`AppTrustEngineTest.kt`) against WhatsApp/PhonePe/Google Pay/
+  YouTube-shaped fixtures.
+- **Permission Tracker** no longer alerts on an established Play-Store app's own camera/mic use
+  or background sensor access — it now needs the same "not from Play Store, or recently
+  installed" correlation factor as Scan All Apps.
+- **Network tab showed nothing real.** `/proc/net/tcp` is blocked by SELinux for third-party
+  apps on Android 10+; the tab's only living data source was a byte-usage counter with the port
+  hardcoded to 0. Added a real, opt-in connection monitor via a local VPN
+  (`RatVpnService.kt` + `ConnectivityManager.getConnectionOwnerUid`) showing actual per-process
+  remote IP/port/protocol/persistence.
+
+### Added
+- **Private Data Access** detection: which apps can read SMS, read notifications (via
+  `Settings.Secure.enabled_notification_listeners`), or read on-screen content via accessibility
+  — shown calmly (trusted apps: informational; untrusted apps: evidence), never as a scare.
+  RAT3 had no detection at all for this before.
+- Device Security Status expanded from 3 tiers (SAFE/WARNING/DANGER) to 5
+  (SAFE/MONITOR/SUSPICIOUS/HIGH RISK/CRITICAL) so a single signal doesn't read the same as
+  several correlated strong ones.
+- A calm, evidence-first Dashboard summary ("No strong indicators... within what RAT3 can
+  inspect") replacing the bare score.
+- Real-time connection monitor (Network tab, off by default): per-connection process/remote-IP/
+  port/protocol/duration/frequency, correlated the same way as the App Trust Engine — a single
+  ordinary connection is never flagged.
+
+### Removed
+- The old per-app `AppRiskLevel`/`riskSignals`/`riskScore` wire format (replaced by
+  `AppTrustLevel`/`evidence`/`trustReason`) and dead `RiskScore.computedLevel`.
+
 ## 1.1.0+2
 
 Bug-fix and hardening pass focused entirely on correctness — no new user-facing features.
