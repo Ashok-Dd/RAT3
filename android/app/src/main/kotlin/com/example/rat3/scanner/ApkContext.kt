@@ -22,7 +22,7 @@ import java.util.zip.ZipFile
  *
  * Build it on a background thread via [ApkContext.build].
  */
-class ApkContext private constructor(
+class ApkContext internal constructor(
     val apkFile: File,
     val sha256: String,
     val sizeBytes: Long,

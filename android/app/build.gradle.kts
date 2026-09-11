@@ -47,6 +47,9 @@ android {
 
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // Robolectric needs the compiled resources/assets on the unit-test classpath
+        // (Layer3SignatureScannerTest reads the real assets/*.json fixtures via Context).
+        unitTests.isIncludeAndroidResources = true
     }
 
     packaging {
@@ -72,4 +75,7 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
+    // Robolectric: only Layer3SignatureScannerTest needs it, to exercise the real
+    // Context.assets reads in Reputation/Signatures without a device or emulator.
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

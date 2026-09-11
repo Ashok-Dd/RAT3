@@ -271,6 +271,184 @@ class DeviceFeatures {
     overallIdleAnomalyScore: 0,
   );
 
+  /// Returns a copy with the given fields replaced. Used to build focused
+  /// test fixtures off `DeviceFeatures.empty()` without repeating all ~65
+  /// constructor arguments per scenario.
+  DeviceFeatures copyWith({
+    DateTime? collectedAt,
+    bool? cameraActiveNow,
+    int? cameraAppsWithPermission,
+    int? cameraAppsRecentFg,
+    bool? cameraActiveWhenScreenOff,
+    bool? cameraActiveDuringIdle,
+    bool? micActiveNow,
+    int? micAppsWithPermission,
+    int? micAppsRecentFg,
+    bool? micActiveOutsideCalls,
+    bool? micActiveWhenScreenOff,
+    bool? micActiveDuringIdle,
+    int? locationAppsWithPermission,
+    int? locationBgAppsCount,
+    bool? locationActiveDuringIdle,
+    double? sensorActivityEntropy,
+    double? sensorUsageIrregularity,
+    int? dangerousPermissionCount,
+    int? highRiskPermissionCount,
+    bool? cameraPermissionGranted,
+    bool? micPermissionGranted,
+    bool? locationPermissionGranted,
+    bool? bgLocationPermissionGranted,
+    bool? accessibilityPermissionActive,
+    bool? deviceAdminActive,
+    double? unusedButGrantedRatio,
+    double? permissionsVsUsageMismatch,
+    int? totalUserInstalledApps,
+    int? nonPlayStoreAppCount,
+    int? recentlyInstalledAppCount,
+    int? unknownInstallerAppCount,
+    int? appsTargetingOldSdkCount,
+    int? appsWithAccessibilityCount,
+    int? appsRunningInBgCount,
+    int? backgroundServicesActiveCount,
+    int? appsRunningDuringIdleCount,
+    double? appInstallRatePerWeek,
+    double? appUninstallRatePerWeek,
+    bool? frequentInstallUninstallPattern,
+    bool? developerOptionsEnabled,
+    bool? usbDebuggingEnabled,
+    bool? unknownSourcesEnabled,
+    int? batteryOptDisabledAppsCount,
+    double? cpuUsagePercent,
+    double? cpuUsageWhenScreenOff,
+    double? screenOnToUsageRatio,
+    bool? rootDetected,
+    int? activeDeviceAdminCount,
+    bool? accessibilityServicesActive,
+    double? memoryUsagePercent,
+    double? batteryDrainRatePerHour,
+    double? bgDataSentMb,
+    double? bgDataReceivedMb,
+    double? dataSentDuringIdleMb,
+    double? dataSentWithoutInteraction,
+    int? uniqueRemoteIpsCount,
+    bool? frequentSmallPackets,
+    double? cpuSpikesWhenScreenOff,
+    double? memoryUsageVariance,
+    int? maliciousConnectionCount,
+    int? suspiciousConnectionCount,
+    bool? dataSentWhenMicActive,
+    bool? dataSentWhenCameraActive,
+    bool? networkDuringSensorUsage,
+    double? fgToBgActivityRatio,
+    double? sensorToNetworkCorrelation,
+    double? overallIdleAnomalyScore,
+  }) => DeviceFeatures(
+    collectedAt: collectedAt ?? this.collectedAt,
+    cameraActiveNow: cameraActiveNow ?? this.cameraActiveNow,
+    cameraAppsWithPermission:
+        cameraAppsWithPermission ?? this.cameraAppsWithPermission,
+    cameraAppsRecentFg: cameraAppsRecentFg ?? this.cameraAppsRecentFg,
+    cameraActiveWhenScreenOff:
+        cameraActiveWhenScreenOff ?? this.cameraActiveWhenScreenOff,
+    cameraActiveDuringIdle:
+        cameraActiveDuringIdle ?? this.cameraActiveDuringIdle,
+    micActiveNow: micActiveNow ?? this.micActiveNow,
+    micAppsWithPermission: micAppsWithPermission ?? this.micAppsWithPermission,
+    micAppsRecentFg: micAppsRecentFg ?? this.micAppsRecentFg,
+    micActiveOutsideCalls: micActiveOutsideCalls ?? this.micActiveOutsideCalls,
+    micActiveWhenScreenOff:
+        micActiveWhenScreenOff ?? this.micActiveWhenScreenOff,
+    micActiveDuringIdle: micActiveDuringIdle ?? this.micActiveDuringIdle,
+    locationAppsWithPermission:
+        locationAppsWithPermission ?? this.locationAppsWithPermission,
+    locationBgAppsCount: locationBgAppsCount ?? this.locationBgAppsCount,
+    locationActiveDuringIdle:
+        locationActiveDuringIdle ?? this.locationActiveDuringIdle,
+    sensorActivityEntropy: sensorActivityEntropy ?? this.sensorActivityEntropy,
+    sensorUsageIrregularity:
+        sensorUsageIrregularity ?? this.sensorUsageIrregularity,
+    dangerousPermissionCount:
+        dangerousPermissionCount ?? this.dangerousPermissionCount,
+    highRiskPermissionCount:
+        highRiskPermissionCount ?? this.highRiskPermissionCount,
+    cameraPermissionGranted:
+        cameraPermissionGranted ?? this.cameraPermissionGranted,
+    micPermissionGranted: micPermissionGranted ?? this.micPermissionGranted,
+    locationPermissionGranted:
+        locationPermissionGranted ?? this.locationPermissionGranted,
+    bgLocationPermissionGranted:
+        bgLocationPermissionGranted ?? this.bgLocationPermissionGranted,
+    accessibilityPermissionActive:
+        accessibilityPermissionActive ?? this.accessibilityPermissionActive,
+    deviceAdminActive: deviceAdminActive ?? this.deviceAdminActive,
+    unusedButGrantedRatio:
+        unusedButGrantedRatio ?? this.unusedButGrantedRatio,
+    permissionsVsUsageMismatch:
+        permissionsVsUsageMismatch ?? this.permissionsVsUsageMismatch,
+    totalUserInstalledApps:
+        totalUserInstalledApps ?? this.totalUserInstalledApps,
+    nonPlayStoreAppCount: nonPlayStoreAppCount ?? this.nonPlayStoreAppCount,
+    recentlyInstalledAppCount:
+        recentlyInstalledAppCount ?? this.recentlyInstalledAppCount,
+    unknownInstallerAppCount:
+        unknownInstallerAppCount ?? this.unknownInstallerAppCount,
+    appsTargetingOldSdkCount:
+        appsTargetingOldSdkCount ?? this.appsTargetingOldSdkCount,
+    appsWithAccessibilityCount:
+        appsWithAccessibilityCount ?? this.appsWithAccessibilityCount,
+    appsRunningInBgCount: appsRunningInBgCount ?? this.appsRunningInBgCount,
+    backgroundServicesActiveCount:
+        backgroundServicesActiveCount ?? this.backgroundServicesActiveCount,
+    appsRunningDuringIdleCount:
+        appsRunningDuringIdleCount ?? this.appsRunningDuringIdleCount,
+    appInstallRatePerWeek: appInstallRatePerWeek ?? this.appInstallRatePerWeek,
+    appUninstallRatePerWeek:
+        appUninstallRatePerWeek ?? this.appUninstallRatePerWeek,
+    frequentInstallUninstallPattern:
+        frequentInstallUninstallPattern ?? this.frequentInstallUninstallPattern,
+    developerOptionsEnabled:
+        developerOptionsEnabled ?? this.developerOptionsEnabled,
+    usbDebuggingEnabled: usbDebuggingEnabled ?? this.usbDebuggingEnabled,
+    unknownSourcesEnabled: unknownSourcesEnabled ?? this.unknownSourcesEnabled,
+    batteryOptDisabledAppsCount:
+        batteryOptDisabledAppsCount ?? this.batteryOptDisabledAppsCount,
+    cpuUsagePercent: cpuUsagePercent ?? this.cpuUsagePercent,
+    cpuUsageWhenScreenOff: cpuUsageWhenScreenOff ?? this.cpuUsageWhenScreenOff,
+    screenOnToUsageRatio: screenOnToUsageRatio ?? this.screenOnToUsageRatio,
+    rootDetected: rootDetected ?? this.rootDetected,
+    activeDeviceAdminCount:
+        activeDeviceAdminCount ?? this.activeDeviceAdminCount,
+    accessibilityServicesActive:
+        accessibilityServicesActive ?? this.accessibilityServicesActive,
+    memoryUsagePercent: memoryUsagePercent ?? this.memoryUsagePercent,
+    batteryDrainRatePerHour:
+        batteryDrainRatePerHour ?? this.batteryDrainRatePerHour,
+    bgDataSentMb: bgDataSentMb ?? this.bgDataSentMb,
+    bgDataReceivedMb: bgDataReceivedMb ?? this.bgDataReceivedMb,
+    dataSentDuringIdleMb: dataSentDuringIdleMb ?? this.dataSentDuringIdleMb,
+    dataSentWithoutInteraction:
+        dataSentWithoutInteraction ?? this.dataSentWithoutInteraction,
+    uniqueRemoteIpsCount: uniqueRemoteIpsCount ?? this.uniqueRemoteIpsCount,
+    frequentSmallPackets: frequentSmallPackets ?? this.frequentSmallPackets,
+    cpuSpikesWhenScreenOff:
+        cpuSpikesWhenScreenOff ?? this.cpuSpikesWhenScreenOff,
+    memoryUsageVariance: memoryUsageVariance ?? this.memoryUsageVariance,
+    maliciousConnectionCount:
+        maliciousConnectionCount ?? this.maliciousConnectionCount,
+    suspiciousConnectionCount:
+        suspiciousConnectionCount ?? this.suspiciousConnectionCount,
+    dataSentWhenMicActive: dataSentWhenMicActive ?? this.dataSentWhenMicActive,
+    dataSentWhenCameraActive:
+        dataSentWhenCameraActive ?? this.dataSentWhenCameraActive,
+    networkDuringSensorUsage:
+        networkDuringSensorUsage ?? this.networkDuringSensorUsage,
+    fgToBgActivityRatio: fgToBgActivityRatio ?? this.fgToBgActivityRatio,
+    sensorToNetworkCorrelation:
+        sensorToNetworkCorrelation ?? this.sensorToNetworkCorrelation,
+    overallIdleAnomalyScore:
+        overallIdleAnomalyScore ?? this.overallIdleAnomalyScore,
+  );
+
   /// Summary string for logging.
   String get summary =>
       'cam=$cameraActiveNow mic=$micActiveNow '
