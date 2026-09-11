@@ -67,6 +67,7 @@ class MainActivity : FlutterActivity() {
         private const val CH_INSTALL = "com.example.rat3/install"
         private const val CH_PROGRESS = "com.example.rat3/progress"
         private const val REQUEST_PICK_APK = 1001
+        private const val REQUEST_VPN_PREPARE = 1002
         private const val APK_MIME = "application/vnd.android.package-archive"
         private const val CACHE_SUBDIR = "apk_scan"
     }
@@ -75,6 +76,7 @@ class MainActivity : FlutterActivity() {
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var progressSink: EventChannel.EventSink? = null
     private var pendingFilePicker: MethodChannel.Result? = null
+    private var pendingVpnConsent: MethodChannel.Result? = null
     private var fileChannel: MethodChannel? = null
 
     @Volatile
@@ -99,6 +101,17 @@ class MainActivity : FlutterActivity() {
     @Deprecated("startActivityForResult kept for FlutterActivity compatibility")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == REQUEST_VPN_PREPARE) {
+            val pending = pendingVpnConsent
+            pendingVpnConsent = null
+            if (resultCode == Activity.RESULT_OK) {
+                com.example.rat3.vpn.RatVpnService.start(applicationContext)
+                pending?.success(true)
+            } else {
+                pending?.success(false)
+            }
+            return
+        }
         if (requestCode != REQUEST_PICK_APK) return
         val pending = pendingFilePicker
         pendingFilePicker = null
@@ -188,23 +201,14 @@ class MainActivity : FlutterActivity() {
                     "isScreenRecordingActive"             -> handleIsScreenRecordingActive(result)
                     "getClipboardInfo"                    -> handleGetClipboardInfo(result)
                     "getDetailedSecurityFlags"            -> handleGetDetailedSecurityFlags(result)
+                    "startVpnMonitor"                     -> handleStartVpnMonitor(result)
+                    "stopVpnMonitor"                       -> handleStopVpnMonitor(result)
+                    "isVpnMonitorActive"                   -> result.success(com.example.rat3.vpn.RatVpnService.isRunning())
+                    "getActiveConnections"                 -> handleGetActiveConnections(result)
                     else                                  -> result.notImplemented()
                 }
             }
     }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    //  SCAN ALL APPS
-    //  The most important new method. Returns a full audit of every
-    //  installed non-system app including:
-    //    • All permissions it requested
-    //    • Whether dangerous permissions are granted
-    //    • Its foreground/background usage time
-    //    • Its install source (Play Store vs sideloaded)
-    //    • Its target SDK (old SDK = higher risk)
-    //    • Whether it was installed recently
-    //    • Risk signals that classify it as SAFE / SUSPICIOUS / MALICIOUS
-    // ═══════════════════════════════════════════════════════════════════════
 
     /**
      * Scan All Apps — evidence-based Application Assessment (RAT3's per-app "trust engine").
@@ -1692,6 +1696,12 @@ class MainActivity : FlutterActivity() {
 
     private fun handleGetVpnStatus(result: MethodChannel.Result) {
         try {
+            // RAT3's own opt-in connection monitor (Settings toggle) is itself a local VPN.
+            // Methods 1/2 below detect "a VPN interface is active" device-wide with no way to
+            // attribute it to a specific app -- without this check, turning on RAT3's own
+            // monitoring feature would flag itself as a suspicious foreign VPN.
+            val ownMonitorActive = com.example.rat3.vpn.RatVpnService.isRunning()
+
             var vpnActive   = false
             var vpnPackage  = ""
             var vpnAppName  = ""
@@ -1699,7 +1709,7 @@ class MainActivity : FlutterActivity() {
             val vpnIfaces   = mutableListOf<String>()
 
             // Method 1: ConnectivityManager — most reliable on Android 6+
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !ownMonitorActive) {
                 try {
                     val cm = getSystemService(CONNECTIVITY_SERVICE)
                         as android.net.ConnectivityManager
@@ -1714,7 +1724,7 @@ class MainActivity : FlutterActivity() {
             }
 
             // Method 2: NetworkInterface scan for VPN tunnel interfaces
-            try {
+            if (!ownMonitorActive) try {
                 val ifaces = java.net.NetworkInterface.getNetworkInterfaces()
                 ifaces?.let { e ->
                     while (e.hasMoreElements()) {
@@ -1786,6 +1796,60 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             result.success(mapOf("isVpnActive" to false, "vpnAppCount" to 0))
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  REAL-TIME CONNECTION MONITOR (optional, user-enabled VPN)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /** Launches the system "Connection request" consent dialog if needed, then starts
+     *  [com.example.rat3.vpn.RatVpnService]. Resolves the Dart Future with true/false once the
+     *  user answers (or immediately with true if consent was already granted). */
+    private fun handleStartVpnMonitor(result: MethodChannel.Result) {
+        val consentIntent = android.net.VpnService.prepare(applicationContext)
+        if (consentIntent == null) {
+            com.example.rat3.vpn.RatVpnService.start(applicationContext)
+            result.success(true)
+            return
+        }
+        pendingVpnConsent = result
+        try {
+            startActivityForResult(consentIntent, REQUEST_VPN_PREPARE)
+        } catch (e: Exception) {
+            Log.e(TAG, "VpnService.prepare() intent failed to launch", e)
+            pendingVpnConsent = null
+            result.success(false)
+        }
+    }
+
+    private fun handleStopVpnMonitor(result: MethodChannel.Result) {
+        com.example.rat3.vpn.RatVpnService.stop(applicationContext)
+        result.success(null)
+    }
+
+    private fun handleGetActiveConnections(result: MethodChannel.Result) {
+        val service = com.example.rat3.vpn.RatVpnService.instance
+        if (service == null) {
+            result.success(emptyList<Map<String, Any?>>())
+            return
+        }
+        val list = service.connectionsSnapshot().map { c ->
+            mapOf(
+                "protocol" to c.protocol,
+                "packageName" to c.packageName,
+                "appName" to c.appName,
+                "remoteAddress" to c.remoteAddress,
+                "remotePort" to c.remotePort,
+                "firstSeenMs" to c.firstSeenMs,
+                "lastSeenMs" to c.lastSeenMs,
+                "bytesSent" to c.bytesSent,
+                "bytesReceived" to c.bytesReceived,
+                "packetCount" to c.packetCount,
+                "reconnectCount" to c.reconnectCount,
+                "isActive" to c.isActive,
+            )
+        }
+        result.success(list)
     }
 
     // ═══════════════════════════════════════════════════════════════════════

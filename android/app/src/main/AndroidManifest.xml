@@ -25,6 +25,11 @@
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+    <!-- Optional, off-by-default real-time connection monitor (Settings toggle). Uses the
+         FOREGROUND_SERVICE_SPECIAL_USE permission already declared above, plus the user's
+         explicit system VPN consent (VpnService.prepare()); see RatVpnService.kt. No extra
+         uses-permission needed here: BIND_VPN_SERVICE guards the service element itself, held
+         by the system when it binds, not something this app declares for itself. -->
 
     <!-- Lets the ACTION_VIEW install intent resolve on Android 11+. -->
     <queries>
@@ -87,6 +92,22 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="continuous on-device RAT / spyware behaviour monitoring" />
+        </service>
+
+        <!-- Optional, off-by-default real-time connection monitor. Requires the user's
+             explicit system VPN consent dialog (VpnService.prepare()) before it can start. -->
+        <service
+            android:name=".vpn.RatVpnService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="real-time network connection monitoring (user-enabled VPN)" />
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
         </service>
 
         <receiver
