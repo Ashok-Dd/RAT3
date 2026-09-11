@@ -65,6 +65,65 @@ class PlatformChannelService {
     }
   }
 
+  // ── Real-time Connection Monitor (optional, user-enabled VPN) ─────────────
+  //
+  // getNetworkConnections() above is dead on Android 10+ (SELinux blocks
+  // /proc/net/tcp for third-party apps). This is the real replacement: a
+  // local VpnService the user explicitly opts into, giving actual
+  // per-connection remote IP/port/protocol via
+  // ConnectivityManager.getConnectionOwnerUid. See RatVpnService.kt.
+
+  /// Triggers the system VPN consent dialog if needed, then starts the
+  /// monitor. Returns true once running, false if the user declined consent
+  /// or the service failed to start.
+  Future<bool> startVpnMonitor() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('startVpnMonitor');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      AppLogger.error(_tag, 'startVpnMonitor failed: ${e.message}');
+      return false;
+    }
+  }
+
+  Future<void> stopVpnMonitor() async {
+    try {
+      await _channel.invokeMethod<void>('stopVpnMonitor');
+    } on PlatformException catch (e) {
+      AppLogger.error(_tag, 'stopVpnMonitor failed: ${e.message}');
+    }
+  }
+
+  Future<bool> isVpnMonitorActive() async {
+    try {
+      final result = await _channel.invokeMethod<bool>('isVpnMonitorActive');
+      return result ?? false;
+    } on PlatformException catch (e) {
+      AppLogger.error(_tag, 'isVpnMonitorActive failed: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Real observed connections: {protocol, packageName, appName,
+  /// remoteAddress, remotePort, firstSeenMs, lastSeenMs, bytesSent,
+  /// bytesReceived, packetCount, reconnectCount, isActive}. Empty if the
+  /// monitor isn't running.
+  Future<List<Map<String, dynamic>>> getActiveConnections() async {
+    try {
+      final result = await _channel.invokeListMethod<dynamic>(
+        'getActiveConnections',
+      );
+      if (result == null) return [];
+      return result
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+    } on PlatformException catch (e) {
+      AppLogger.error(_tag, 'getActiveConnections failed: ${e.message}');
+      return [];
+    }
+  }
+
   // ── Network Data Usage ─────────────────────────────────────────────────────
 
   /// Returns {totalTxBytes, totalRxBytes, mobileTxBytes, mobileRxBytes}.

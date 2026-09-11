@@ -98,9 +98,15 @@ class _AppScanScreenState extends State<AppScanScreen>
         _scanning = false;
       });
       // Surface the per-app findings in the shared Alerts tab.
-      context.read<AppController>().alertEngine.injectAppScanAlerts(
-        result.alerts,
-      );
+      final controller = context.read<AppController>();
+      controller.alertEngine.injectAppScanAlerts(result.alerts);
+      // Let the Connection Monitor correlate a connection with an app this
+      // scan already flagged, instead of judging network activity alone.
+      controller.updateUntrustedPackages([
+        ...result.maliciousApps,
+        ...result.suspiciousApps,
+        ...result.needsReviewApps,
+      ]);
     } catch (e) {
       if (mounted) {
         setState(() {

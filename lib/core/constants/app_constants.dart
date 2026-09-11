@@ -44,6 +44,30 @@ class AppConstants {
 
   // Background Task ID
   static const String backgroundTaskId = 'rat_prevention_bg_scan';
+
+  // Network indicator lists — illustrative, not a live threat-intel feed
+  // (same honesty caveat as assets/blocklist.json). Shared by NetworkMonitor
+  // (legacy byte-usage view) and ConnectionMonitor (real per-connection view)
+  // so the two don't quietly drift out of sync.
+  static const List<String> knownMaliciousIpPrefixes = [
+    '185.220.',
+    '185.100.',
+    '194.165.',
+    '5.188.',
+    '45.142.',
+    '193.32.',
+  ];
+
+  static const List<int> suspiciousPorts = [
+    1337,
+    4444,
+    4445,
+    6666,
+    6667,
+    8888,
+    9999,
+    31337,
+  ];
 }
 
 /// Device Security Status — "does this device currently show evidence of RAT

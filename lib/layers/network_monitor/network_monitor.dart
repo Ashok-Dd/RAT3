@@ -40,27 +40,12 @@ class NetworkMonitor {
   // Previous TX snapshot for delta detection (active upload detection)
   final Map<String, int> _previousTxSnapshot = {};
 
-  // Known malicious IP ranges
-  static const List<String> _maliciousIpPrefixes = [
-    '185.220.',
-    '185.100.',
-    '194.165.',
-    '5.188.',
-    '45.142.',
-    '193.32.',
-  ];
-
-  // Suspicious RAT/backdoor ports
-  static const List<int> _suspiciousPorts = [
-    1337,
-    4444,
-    4445,
-    6666,
-    6667,
-    8888,
-    9999,
-    31337,
-  ];
+  // Known malicious IP ranges / suspicious RAT-backdoor ports — shared with
+  // ConnectionMonitor via AppConstants (see its doc comment for the honesty
+  // caveat: illustrative lists, not a live feed).
+  static const List<String> _maliciousIpPrefixes =
+      AppConstants.knownMaliciousIpPrefixes;
+  static const List<int> _suspiciousPorts = AppConstants.suspiciousPorts;
 
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 

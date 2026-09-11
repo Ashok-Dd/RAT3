@@ -1,33 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/core/theme/app_theme.dart';
 import 'package:rat3/core/utils/app_utils.dart';
+import 'package:rat3/data/models/app_models.dart';
+import 'package:rat3/data/services/app_controller.dart';
 import 'package:rat3/data/services/platform_channel_service.dart';
 import 'package:rat3/presentation/onboarding/onboarding_screen.dart';
 
-/// NetworkScreen
+/// NetworkScreen — process-level network connection monitor.
 ///
-/// Responsibility: Show every user-installed app's network usage —
-/// how much data each app has SENT and RECEIVED since last boot.
+/// RAT3's Network tab is NOT a data-usage tracker: a single ordinary HTTPS
+/// connection from a trusted app is never a finding, no matter how much data
+/// it moves. The question this tab answers is "is any process continuously
+/// or repeatedly communicating with a remote endpoint in a way that could
+/// indicate RAT-like behavior?" — real per-connection process/remote-IP/
+/// port/protocol/persistence, via `ConnectionMonitor` (backed by a local,
+/// user-opted-in VPN — see RatVpnService.kt's doc comment for why a VPN is
+/// the only non-root way to get this on Android 10+).
 ///
-/// This screen is SELF-CONTAINED — it fetches its own data via
-/// PlatformChannelService directly. It does NOT depend on the scan
-/// cycle or AppController.connections, so it always shows real data.
-///
-/// Data source: NetworkStatsManager per-UID (needs "usage access", requested
-/// during onboarding), falling back to TrafficStats per-UID — which is NOT
-/// reliably available on every device/kernel and can report 0 for everything.
-/// The app list is always shown regardless (even at 0 bytes) so this screen
-/// never looks empty; see the usage-access hint banner below.
-///
-/// Each app entry shows:
-///   • App name + package name
-///   • Total bytes SENT (TX) — highlighted red if large
-///   • Total bytes RECEIVED (RX)
-///   • A risk tag: HIGH UPLOADER / SUSPICIOUS if TX is large
-///
-/// Sorted by TX bytes descending (biggest senders first) —
-/// because data exfiltration = sending, not receiving.
+/// The real-time monitor is OFF by default (it requires the system VPN
+/// consent dialog). While off, this screen falls back to an aggregate
+/// per-app byte-usage list — useful supplementary info, but explicitly
+/// secondary, not the headline, and never itself a verdict.
 class NetworkScreen extends StatefulWidget {
   const NetworkScreen({super.key});
 
@@ -43,9 +38,9 @@ class _NetworkScreenState extends State<NetworkScreen> {
   List<_AppTraffic> _apps = [];
   DateTime? _lastLoaded;
   bool _usageAccessGranted = true;
+  bool _togglingMonitor = false;
 
-  // Filter state
-  _Filter _filter = _Filter.all;
+  _ConnFilter _filter = _ConnFilter.all;
 
   // System packages to skip — we only care about user apps
   static const _skipPfx = [
@@ -89,11 +84,8 @@ class _NetworkScreenState extends State<NetworkScreen> {
         final tx = (r['txBytes'] as num?)?.toInt() ?? 0;
         final rx = (r['rxBytes'] as num?)?.toInt() ?? 0;
         if (_skip(pkg)) continue;
-        // Include ALL apps — even those with 0 bytes (still useful to show)
         apps.add(_AppTraffic(pkg: pkg, name: name, txBytes: tx, rxBytes: rx));
       }
-
-      // Sort by TX descending — biggest uploaders first
       apps.sort((a, b) => b.txBytes.compareTo(a.txBytes));
 
       setState(() {
@@ -110,337 +102,362 @@ class _NetworkScreenState extends State<NetworkScreen> {
     }
   }
 
-  List<_AppTraffic> get _filtered {
-    switch (_filter) {
-      case _Filter.all:
-        return _apps;
-      case _Filter.senders:
-        return _apps.where((a) => a.txBytes > 0).toList();
-      case _Filter.highRisk:
-        return _apps.where((a) => a.riskTag != _RiskTag.none).toList();
+  Future<void> _toggleMonitor(AppController ctrl, bool enable) async {
+    setState(() => _togglingMonitor = true);
+    try {
+      if (enable) {
+        final started = await ctrl.enableConnectionMonitor();
+        if (!started && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Real-time monitoring needs the system VPN permission — it was not granted.',
+              ),
+            ),
+          );
+        }
+      } else {
+        await ctrl.disableConnectionMonitor();
+      }
+    } finally {
+      if (mounted) setState(() => _togglingMonitor = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final filtered = _filtered;
-
-    // Summary totals
-    final totalTx = _apps.fold<int>(0, (s, a) => s + a.txBytes);
-    final totalRx = _apps.fold<int>(0, (s, a) => s + a.rxBytes);
-    final highCount = _apps.where((a) => a.riskTag == _RiskTag.high).length;
-    final suspCount = _apps
-        .where((a) => a.riskTag == _RiskTag.suspicious)
-        .length;
+    final ctrl = context.watch<AppController>();
+    final vpnActive = ctrl.isConnectionMonitorActive;
+    final evidence = ctrl.connectionEvidence;
 
     return Scaffold(
       backgroundColor: AppTheme.backgroundPrimary,
-      body: Column(
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
         children: [
-          // ── Header ─────────────────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
-            child: Row(
-              children: [
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'NETWORK USAGE',
-                      style: AppTheme.labelSmall.copyWith(
-                        color: AppTheme.neonCyan,
-                        letterSpacing: 2,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    if (_lastLoaded != null)
-                      Text(
-                        'since last boot  •  ${_fmt(_lastLoaded!)}',
-                        style: AppTheme.bodyMedium.copyWith(
-                          color: AppTheme.textMuted,
-                          fontSize: 9,
-                        ),
-                      ),
-                  ],
-                ),
-                const Spacer(),
-                if (_loading)
-                  const SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: AppTheme.neonGreen,
-                    ),
-                  )
-                else
-                  GestureDetector(
-                    onTap: _load,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppTheme.neonGreen.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                          color: AppTheme.neonGreen.withValues(alpha: 0.4),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.refresh_rounded,
-                            size: 13,
-                            color: AppTheme.neonGreen,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            'REFRESH',
-                            style: AppTheme.labelSmall.copyWith(
-                              color: AppTheme.neonGreen,
-                              fontSize: 9,
-                              letterSpacing: 1,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
+          Text(
+            'NETWORK MONITOR',
+            style: AppTheme.labelSmall.copyWith(
+              color: AppTheme.neonCyan,
+              letterSpacing: 2,
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
             ),
           ),
-
-          // ── Usage-access hint ───────────────────────────────────────────
-          if (!_loading && _error == null && !_usageAccessGranted)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: GestureDetector(
-                onTap: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => const OnboardingScreen(),
-                  ),
-                ),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppTheme.neonOrange.withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: AppTheme.neonOrange.withValues(alpha: 0.35),
-                    ),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.info_outline,
-                        size: 16,
-                        color: AppTheme.neonOrange,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Usage access is off, so per-app totals may read 0. Tap to grant it.',
-                          style: AppTheme.bodyMedium.copyWith(
-                            color: AppTheme.neonOrange,
-                            fontSize: 11,
-                          ),
-                        ),
-                      ),
-                      const Icon(
-                        Icons.chevron_right,
-                        size: 16,
-                        color: AppTheme.neonOrange,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+          const SizedBox(height: 4),
+          Text(
+            'Real per-connection activity, not data usage — a single ordinary '
+            'connection from a trusted app is never flagged.',
+            style: AppTheme.bodyMedium.copyWith(
+              color: AppTheme.textMuted,
+              fontSize: 11,
             ),
-
-          // ── Summary cards ───────────────────────────────────────────────
-          if (!_loading && _error == null && _apps.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
-              child: Row(
-                children: [
-                  _SummaryCard(
-                    icon: Icons.arrow_upward_rounded,
-                    label: 'TOTAL SENT',
-                    value: AppFormatter.formatBytes(totalTx),
-                    color: highCount > 0
-                        ? AppTheme.alertRed
-                        : AppTheme.neonOrange,
-                  ),
-                  const SizedBox(width: 8),
-                  _SummaryCard(
-                    icon: Icons.arrow_downward_rounded,
-                    label: 'TOTAL RECV',
-                    value: AppFormatter.formatBytes(totalRx),
-                    color: AppTheme.neonGreen,
-                  ),
-                  const SizedBox(width: 8),
-                  _SummaryCard(
-                    icon: Icons.warning_amber_rounded,
-                    label: 'FLAGGED',
-                    value: '${highCount + suspCount} apps',
-                    color: highCount > 0
-                        ? AppTheme.alertRed
-                        : suspCount > 0
-                        ? AppTheme.alertOrange
-                        : AppTheme.textMuted,
-                  ),
-                ],
-              ),
-            ),
-
-          // ── Filter bar ──────────────────────────────────────────────────
-          if (!_loading && _error == null && _apps.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: Row(
-                children: [
-                  _FilterBtn(
-                    label: 'ALL APPS',
-                    count: _apps.length,
-                    active: _filter == _Filter.all,
-                    onTap: () => setState(() => _filter = _Filter.all),
-                  ),
-                  const SizedBox(width: 8),
-                  _FilterBtn(
-                    label: 'SENT DATA',
-                    count: _apps.where((a) => a.txBytes > 0).length,
-                    active: _filter == _Filter.senders,
-                    onTap: () => setState(() => _filter = _Filter.senders),
-                  ),
-                  const SizedBox(width: 8),
-                  _FilterBtn(
-                    label: 'FLAGGED',
-                    count: highCount + suspCount,
-                    active: _filter == _Filter.highRisk,
-                    color: AppTheme.alertOrange,
-                    onTap: () => setState(() => _filter = _Filter.highRisk),
-                  ),
-                ],
-              ),
-            ),
-
-          const SizedBox(height: 10),
-
-          // ── Body ────────────────────────────────────────────────────────
-          Expanded(
-            child: _error != null
-                ? _buildError()
-                : _loading
-                ? _buildLoading()
-                : _apps.isEmpty
-                ? _buildEmpty()
-                : filtered.isEmpty
-                ? _buildNoMatch()
-                : _buildList(filtered),
           ),
+          const SizedBox(height: 14),
+
+          _MonitorToggleCard(
+            active: vpnActive,
+            busy: _togglingMonitor,
+            onChanged: (v) => _toggleMonitor(ctrl, v),
+          ),
+
+          if (vpnActive) ...[
+            const SizedBox(height: 16),
+            _buildConnectionSection(evidence),
+          ],
+
+          const SizedBox(height: 20),
+          _buildUsageSection(vpnActive),
         ],
       ),
     );
   }
 
-  Widget _buildList(List<_AppTraffic> apps) {
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
-      itemCount: apps.length,
-      itemBuilder: (_, i) => _AppTile(app: apps[i]),
+  // ── Real-time connection section ────────────────────────────────────────
+
+  Widget _buildConnectionSection(List<ConnectionEvidence> evidence) {
+    final active = evidence.where((c) => c.isActive).length;
+    final suspicious = evidence
+        .where((c) => c.assessment == ConnectionAssessment.suspicious)
+        .length;
+    final persistent = evidence.where((c) => c.isPersistent).length;
+
+    final filtered = switch (_filter) {
+      _ConnFilter.all => evidence,
+      _ConnFilter.active => evidence.where((c) => c.isActive).toList(),
+      _ConnFilter.suspicious => evidence
+          .where((c) => c.assessment != ConnectionAssessment.normal)
+          .toList(),
+    };
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            _summaryChip('$active', 'ACTIVE', AppTheme.neonGreen),
+            const SizedBox(width: 8),
+            _summaryChip(
+              '$suspicious',
+              'SUSPICIOUS',
+              suspicious > 0 ? AppTheme.alertOrange : AppTheme.textMuted,
+            ),
+            const SizedBox(width: 8),
+            _summaryChip('$persistent', 'PERSISTENT', AppTheme.neonCyan),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            _FilterBtn(
+              label: 'ALL',
+              count: evidence.length,
+              active: _filter == _ConnFilter.all,
+              onTap: () => setState(() => _filter = _ConnFilter.all),
+            ),
+            const SizedBox(width: 8),
+            _FilterBtn(
+              label: 'ACTIVE NOW',
+              count: active,
+              active: _filter == _ConnFilter.active,
+              onTap: () => setState(() => _filter = _ConnFilter.active),
+            ),
+            const SizedBox(width: 8),
+            _FilterBtn(
+              label: 'NEEDS REVIEW',
+              count: evidence
+                  .where((c) => c.assessment != ConnectionAssessment.normal)
+                  .length,
+              active: _filter == _ConnFilter.suspicious,
+              color: AppTheme.alertOrange,
+              onTap: () => setState(() => _filter = _ConnFilter.suspicious),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (filtered.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 24),
+            child: Center(
+              child: Text(
+                evidence.isEmpty
+                    ? 'Watching for connections…'
+                    : 'No connections match this filter',
+                style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted),
+              ),
+            ),
+          )
+        else
+          ...filtered.map(
+            (c) => _ConnectionCard(
+              connection: c,
+              onTap: () => _showConnectionDetail(c),
+            ),
+          ),
+      ],
     );
   }
 
-  Widget _buildLoading() => const Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        CircularProgressIndicator(strokeWidth: 2, color: AppTheme.neonGreen),
-        SizedBox(height: 16),
-        Text(
-          'Reading network usage…',
-          style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
-        ),
-      ],
-    ),
-  );
+  void _showConnectionDetail(ConnectionEvidence c) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.backgroundCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _ConnectionDetailSheet(connection: c),
+    );
+  }
 
-  Widget _buildEmpty() => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: AppTheme.neonGreen.withValues(alpha: 0.08),
-            border: Border.all(
-              color: AppTheme.neonGreen.withValues(alpha: 0.3),
+  Widget _summaryChip(String count, String label, Color color) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            count,
+            style: AppTheme.bodyLarge.copyWith(
+              color: color,
+              fontWeight: FontWeight.w800,
             ),
           ),
-          child: const Icon(
-            Icons.wifi_off_rounded,
-            size: 36,
-            color: AppTheme.neonGreen,
+          Text(
+            label,
+            style: AppTheme.labelSmall.copyWith(color: color, fontSize: 8),
           ),
-        ),
-        const SizedBox(height: 16),
-        const Text(
-          'No network usage data found',
-          style: TextStyle(color: AppTheme.textMuted),
-        ),
-        const SizedBox(height: 6),
-        const Text(
-          'Try refreshing after using some apps',
-          style: TextStyle(color: AppTheme.textMuted, fontSize: 11),
-        ),
-      ],
+        ],
+      ),
     ),
   );
 
-  Widget _buildNoMatch() => const Center(
-    child: Text(
-      'No apps match this filter',
-      style: TextStyle(color: AppTheme.textMuted),
-    ),
-  );
+  // ── Aggregate byte-usage section (secondary, supplementary info) ────────
 
-  Widget _buildError() => Center(
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
+  Widget _buildUsageSection(bool vpnActive) {
+    final totalTx = _apps.fold<int>(0, (s, a) => s + a.txBytes);
+    final totalRx = _apps.fold<int>(0, (s, a) => s + a.rxBytes);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Icon(Icons.error_outline, color: AppTheme.alertRed, size: 40),
-        const SizedBox(height: 12),
-        Text(
-          _error ?? '',
-          style: const TextStyle(color: AppTheme.textMuted),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 16),
-        GestureDetector(
-          onTap: _load,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
-            decoration: BoxDecoration(
-              border: Border.all(
-                color: AppTheme.neonGreen.withValues(alpha: 0.5),
-              ),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: const Text(
-              'RETRY',
-              style: TextStyle(
-                color: AppTheme.neonGreen,
+        Row(
+          children: [
+            Text(
+              vpnActive ? 'DATA USAGE (SUPPLEMENTARY)' : 'DATA USAGE',
+              style: AppTheme.labelSmall.copyWith(
+                color: AppTheme.textMuted,
                 letterSpacing: 1.5,
-                fontSize: 11,
+                fontSize: 10,
               ),
             ),
+            const Spacer(),
+            if (_loading)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: AppTheme.textMuted,
+                ),
+              )
+            else
+              GestureDetector(
+                onTap: _load,
+                child: Icon(
+                  Icons.refresh_rounded,
+                  size: 16,
+                  color: AppTheme.textMuted,
+                ),
+              ),
+          ],
+        ),
+        if (!vpnActive) ...[
+          const SizedBox(height: 4),
+          Text(
+            'Aggregate bytes sent/received per app — no per-connection detail '
+            '(remote IP/port) without real-time monitoring enabled above.',
+            style: AppTheme.bodyMedium.copyWith(
+              color: AppTheme.textMuted,
+              fontSize: 10,
+            ),
+          ),
+        ],
+        const SizedBox(height: 10),
+
+        if (!_loading && _error == null && !_usageAccessGranted)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: GestureDetector(
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const OnboardingScreen(),
+                ),
+              ),
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                decoration: BoxDecoration(
+                  color: AppTheme.neonOrange.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: AppTheme.neonOrange.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.info_outline,
+                      size: 16,
+                      color: AppTheme.neonOrange,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Usage access is off, so per-app totals may read 0. Tap to grant it.',
+                        style: AppTheme.bodyMedium.copyWith(
+                          color: AppTheme.neonOrange,
+                          fontSize: 11,
+                        ),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.chevron_right,
+                      size: 16,
+                      color: AppTheme.neonOrange,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+        if (_error != null)
+          Text(_error!, style: const TextStyle(color: AppTheme.alertRed))
+        else if (_apps.isEmpty && !_loading)
+          Text(
+            'No network usage data found yet.',
+            style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted),
+          )
+        else ...[
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Sent ${AppFormatter.formatBytes(totalTx)}  ·  '
+                  'Received ${AppFormatter.formatBytes(totalRx)}',
+                  style: AppTheme.bodyMedium.copyWith(
+                    color: AppTheme.textSecondary,
+                    fontSize: 11,
+                  ),
+                ),
+              ),
+              if (_lastLoaded != null)
+                Text(
+                  _fmt(_lastLoaded!),
+                  style: AppTheme.labelSmall.copyWith(
+                    color: AppTheme.textMuted,
+                    fontSize: 9,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ..._apps.take(vpnActive ? 5 : _apps.length).map(_buildUsageRow),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildUsageRow(_AppTraffic app) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            app.name,
+            style: AppTheme.bodyMedium.copyWith(fontSize: 11),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        Text(
+          '↑${AppFormatter.formatBytes(app.txBytes)}',
+          style: AppTheme.labelSmall.copyWith(
+            color: AppTheme.neonOrange,
+            fontSize: 10,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Text(
+          '↓${AppFormatter.formatBytes(app.rxBytes)}',
+          style: AppTheme.labelSmall.copyWith(
+            color: AppTheme.neonGreen,
+            fontSize: 10,
           ),
         ),
       ],
@@ -452,58 +469,71 @@ class _NetworkScreenState extends State<NetworkScreen> {
       '${t.minute.toString().padLeft(2, '0')}';
 }
 
-// ── Summary Card ──────────────────────────────────────────────────────────
+// ── Monitor Toggle Card ──────────────────────────────────────────────────
 
-class _SummaryCard extends StatelessWidget {
-  final IconData icon;
-  final String label, value;
-  final Color color;
-  const _SummaryCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
+class _MonitorToggleCard extends StatelessWidget {
+  final bool active;
+  final bool busy;
+  final ValueChanged<bool> onChanged;
+  const _MonitorToggleCard({
+    required this.active,
+    required this.busy,
+    required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: AppTheme.backgroundCard,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(color: color.withValues(alpha: 0.3)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+    final color = active ? AppTheme.neonGreen : AppTheme.textMuted;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.backgroundCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            active ? Icons.podcasts_rounded : Icons.podcasts_outlined,
+            color: color,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(icon, size: 10, color: color),
-                const SizedBox(width: 4),
                 Text(
-                  label,
-                  style: AppTheme.labelSmall.copyWith(
-                    color: color,
-                    fontSize: 8,
-                    letterSpacing: 0.8,
+                  'Real-Time Connection Monitor',
+                  style: AppTheme.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  active
+                      ? 'Watching real connections via a local VPN'
+                      : 'Uses a local VPN to see real remote IP/port per app — requires the system VPN permission',
+                  style: AppTheme.bodyMedium.copyWith(
+                    color: AppTheme.textMuted,
+                    fontSize: 10,
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            Text(
-              value,
-              style: AppTheme.bodyMedium.copyWith(
-                color: AppTheme.textPrimary,
-                fontWeight: FontWeight.w700,
-                fontSize: 11,
-              ),
-              overflow: TextOverflow.ellipsis,
+          ),
+          if (busy)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          else
+            Switch(
+              value: active,
+              onChanged: onChanged,
+              activeThumbColor: AppTheme.neonGreen,
             ),
-          ],
-        ),
+        ],
       ),
     );
   }
@@ -570,157 +600,129 @@ class _FilterBtn extends StatelessWidget {
   }
 }
 
-// ── App Traffic Tile ──────────────────────────────────────────────────────
+// ── Connection Card ───────────────────────────────────────────────────────
 
-class _AppTile extends StatelessWidget {
-  final _AppTraffic app;
-  const _AppTile({required this.app});
+class _ConnectionCard extends StatelessWidget {
+  final ConnectionEvidence connection;
+  final VoidCallback onTap;
+  const _ConnectionCard({required this.connection, required this.onTap});
+
+  Color get _color => switch (connection.assessment) {
+    ConnectionAssessment.suspicious => AppTheme.alertOrange,
+    ConnectionAssessment.investigate => AppTheme.neonCyan,
+    ConnectionAssessment.normal => AppTheme.borderColor,
+  };
 
   @override
   Widget build(BuildContext context) {
-    final tag = app.riskTag;
-
-    Color leftBorderColor;
-    if (tag == _RiskTag.high) {
-      leftBorderColor = AppTheme.alertRed;
-    } else if (tag == _RiskTag.suspicious) {
-      leftBorderColor = AppTheme.alertOrange;
-    } else if (app.txBytes > 0) {
-      leftBorderColor = AppTheme.neonCyan.withValues(alpha: 0.4);
-    } else {
-      leftBorderColor = AppTheme.borderColor;
-    }
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 7),
-      decoration: BoxDecoration(
-        color: AppTheme.backgroundCard,
-        borderRadius: BorderRadius.circular(6),
-        border: Border(
-          left: BorderSide(color: leftBorderColor, width: 2.5),
-          top: BorderSide(color: AppTheme.borderColor),
-          right: BorderSide(color: AppTheme.borderColor),
-          bottom: BorderSide(color: AppTheme.borderColor),
+    final c = connection;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppTheme.backgroundCard,
+          borderRadius: BorderRadius.circular(8),
+          border: Border(
+            left: BorderSide(color: _color, width: 2.5),
+            top: BorderSide(color: AppTheme.borderColor),
+            right: BorderSide(color: AppTheme.borderColor),
+            bottom: BorderSide(color: AppTheme.borderColor),
+          ),
         ),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Row 1: name + risk badge
             Row(
               children: [
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        app.name,
-                        style: AppTheme.bodyMedium.copyWith(
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.textPrimary,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      Text(
-                        app.pkg,
-                        style: AppTheme.bodyMedium.copyWith(
-                          color: AppTheme.textMuted,
-                          fontSize: 9,
-                        ),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-                if (tag != _RiskTag.none) _RiskBadge(tag: tag),
-              ],
-            ),
-
-            const SizedBox(height: 8),
-
-            // Row 2: TX / RX chips
-            Row(
-              children: [
-                _DataChip(
-                  icon: Icons.arrow_upward_rounded,
-                  label: 'SENT',
-                  value: AppFormatter.formatBytes(app.txBytes),
-                  color: app.txBytes > 10 * 1024 * 1024
-                      ? AppTheme.alertRed
-                      : app.txBytes > 1024 * 1024
-                      ? AppTheme.alertOrange
-                      : AppTheme.textMuted,
-                ),
-                const SizedBox(width: 12),
-                _DataChip(
-                  icon: Icons.arrow_downward_rounded,
-                  label: 'RECV',
-                  value: AppFormatter.formatBytes(app.rxBytes),
-                  color: AppTheme.neonGreen,
-                ),
-                const Spacer(),
-                // TX bar visualiser
-                if (app.txBytes > 0) _TxBar(txBytes: app.txBytes),
-              ],
-            ),
-
-            // Warning for large uploads
-            if (tag == _RiskTag.high) ...[
-              const SizedBox(height: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppTheme.alertRed.withValues(alpha: 0.07),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: AppTheme.alertRed.withValues(alpha: 0.25),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.warning_amber_rounded,
-                      size: 12,
-                      color: AppTheme.alertRed,
+                  child: Text(
+                    c.appName,
+                    style: AppTheme.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        'Large data upload — ${AppFormatter.formatBytes(app.txBytes)} sent. '
-                        'Verify this is expected.',
-                        style: AppTheme.bodyMedium.copyWith(
-                          color: AppTheme.alertRed,
-                          fontSize: 10,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ] else if (tag == _RiskTag.suspicious) ...[
-              const SizedBox(height: 6),
-              Row(
-                children: [
-                  const Icon(
-                    Icons.info_outline,
-                    size: 12,
-                    color: AppTheme.alertOrange,
+                    overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(width: 6),
-                  Expanded(
+                ),
+                if (c.isActive)
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppTheme.neonGreen.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
                     child: Text(
-                      'Elevated outbound data — review if expected.',
-                      style: AppTheme.bodyMedium.copyWith(
-                        color: AppTheme.alertOrange,
-                        fontSize: 10,
+                      'ACTIVE',
+                      style: AppTheme.labelSmall.copyWith(
+                        color: AppTheme.neonGreen,
+                        fontSize: 8,
+                      ),
+                    ),
+                  ),
+                if (c.assessment != ConnectionAssessment.normal) ...[
+                  const SizedBox(width: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 5,
+                      vertical: 1,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _color.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    child: Text(
+                      c.assessment.label,
+                      style: AppTheme.labelSmall.copyWith(
+                        color: _color,
+                        fontSize: 8,
                       ),
                     ),
                   ),
                 ],
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '${c.remoteAddress}:${c.remotePort}  ·  ${c.protocol}',
+              style: AppTheme.bodyMedium.copyWith(
+                color: AppTheme.textSecondary,
+                fontSize: 11,
               ),
-            ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Text(
+                  c.isPersistent ? 'Persistent' : 'One-off',
+                  style: AppTheme.labelSmall.copyWith(
+                    color: c.isPersistent
+                        ? AppTheme.neonCyan
+                        : AppTheme.textMuted,
+                    fontSize: 9,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  '${AppFormatter.formatBytes(c.bytesSent)} sent',
+                  style: AppTheme.labelSmall.copyWith(
+                    color: AppTheme.textMuted,
+                    fontSize: 9,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  AppFormatter.formatTimeAgo(c.lastSeen),
+                  style: AppTheme.labelSmall.copyWith(
+                    color: AppTheme.textMuted,
+                    fontSize: 9,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -728,124 +730,92 @@ class _AppTile extends StatelessWidget {
   }
 }
 
-// ── TX Bar Visualiser ─────────────────────────────────────────────────────
+// ── Connection Detail Sheet ───────────────────────────────────────────────
 
-class _TxBar extends StatelessWidget {
-  final int txBytes;
-  const _TxBar({required this.txBytes});
+class _ConnectionDetailSheet extends StatelessWidget {
+  final ConnectionEvidence connection;
+  const _ConnectionDetailSheet({required this.connection});
 
   @override
   Widget build(BuildContext context) {
-    // Max reference = 100 MB
-    const maxBytes = 100 * 1024 * 1024;
-    final ratio = (txBytes / maxBytes).clamp(0.0, 1.0);
-    final color = txBytes > 10 * 1024 * 1024
-        ? AppTheme.alertRed
-        : txBytes > 1024 * 1024
-        ? AppTheme.alertOrange
-        : AppTheme.neonCyan;
-
-    return SizedBox(
-      width: 60,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            AppFormatter.formatBytes(txBytes),
-            style: AppTheme.labelSmall.copyWith(color: color, fontSize: 8),
-          ),
-          const SizedBox(height: 3),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(2),
-            child: LinearProgressIndicator(
-              value: ratio,
-              minHeight: 4,
-              backgroundColor: AppTheme.borderColor,
-              valueColor: AlwaysStoppedAnimation(color),
+    final c = connection;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'CONNECTION DETAILS',
+              style: AppTheme.labelSmall.copyWith(
+                color: AppTheme.neonCyan,
+                letterSpacing: 1.5,
+              ),
             ),
-          ),
-        ],
+            const SizedBox(height: 12),
+            _row('Process', '${c.appName} (${c.packageName})'),
+            _row('Remote Endpoint', '${c.remoteAddress}:${c.remotePort}'),
+            _row('Protocol', c.protocol),
+            _row('First Observed', _time(c.firstSeen)),
+            _row('Last Observed', _time(c.lastSeen)),
+            _row(
+              'Connection Pattern',
+              c.isPersistent ? 'Persistent' : 'One-off',
+            ),
+            _row('Reconnections', '${c.reconnectCount}'),
+            _row('Data', '↑${_bytes(c.bytesSent)}  ↓${_bytes(c.bytesReceived)}'),
+            const SizedBox(height: 10),
+            Text(
+              'Assessment: ${c.assessment.label}',
+              style: AppTheme.bodyMedium.copyWith(fontWeight: FontWeight.w700),
+            ),
+            if (c.reasons.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              ...c.reasons.map(
+                (r) => Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '• $r',
+                    style: AppTheme.bodyMedium.copyWith(
+                      color: AppTheme.textSecondary,
+                      fontSize: 11,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
-}
 
-// ── Data Chip ─────────────────────────────────────────────────────────────
+  String _bytes(int b) => AppFormatter.formatBytes(b);
+  String _time(DateTime t) =>
+      '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}:${t.second.toString().padLeft(2, '0')}';
 
-class _DataChip extends StatelessWidget {
-  final IconData icon;
-  final String label, value;
-  final Color color;
-  const _DataChip({
-    required this.icon,
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
+  Widget _row(String label, String value) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 4),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 10, color: color),
-        const SizedBox(width: 3),
-        Text(
-          '$label  ',
-          style: AppTheme.labelSmall.copyWith(
-            color: AppTheme.textMuted,
-            fontSize: 9,
+        SizedBox(
+          width: 130,
+          child: Text(
+            label,
+            style: AppTheme.bodyMedium.copyWith(color: AppTheme.textMuted),
           ),
         ),
-        Text(
-          value,
-          style: AppTheme.labelSmall.copyWith(
-            color: color,
-            fontWeight: FontWeight.w700,
-            fontSize: 10,
-          ),
-        ),
+        Expanded(child: Text(value, style: AppTheme.bodyMedium)),
       ],
-    );
-  }
-}
-
-// ── Risk Badge ────────────────────────────────────────────────────────────
-
-class _RiskBadge extends StatelessWidget {
-  final _RiskTag tag;
-  const _RiskBadge({required this.tag});
-
-  @override
-  Widget build(BuildContext context) {
-    final color = tag == _RiskTag.high
-        ? AppTheme.alertRed
-        : AppTheme.alertOrange;
-    final label = tag == _RiskTag.high ? 'HIGH UPLOAD' : 'ELEVATED';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(3),
-        border: Border.all(color: color.withValues(alpha: 0.4)),
-      ),
-      child: Text(
-        label,
-        style: AppTheme.labelSmall.copyWith(
-          color: color,
-          fontSize: 8,
-          fontWeight: FontWeight.w800,
-        ),
-      ),
-    );
-  }
+    ),
+  );
 }
 
 // ── Data Models ───────────────────────────────────────────────────────────
 
-enum _Filter { all, senders, highRisk }
-
-enum _RiskTag { none, suspicious, high }
+enum _ConnFilter { all, active, suspicious }
 
 class _AppTraffic {
   final String pkg, name;
@@ -857,13 +827,4 @@ class _AppTraffic {
     required this.txBytes,
     required this.rxBytes,
   });
-
-  int get totalBytes => txBytes + rxBytes;
-
-  // > 50 MB sent = HIGH, > 5 MB = suspicious
-  _RiskTag get riskTag {
-    if (txBytes > 50 * 1024 * 1024) return _RiskTag.high;
-    if (txBytes > 5 * 1024 * 1024) return _RiskTag.suspicious;
-    return _RiskTag.none;
-  }
 }

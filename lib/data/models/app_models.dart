@@ -96,6 +96,117 @@ class NetworkConnection {
   int get totalBytes => bytesSent + bytesReceived;
 }
 
+// ── Connection Evidence (real-time VPN-based connection monitor) ───────────
+
+/// One assessment level for an observed network connection — process-level,
+/// not "how much data did this app use". A single ordinary connection is
+/// never flagged; see [ConnectionEvidence.assessment].
+enum ConnectionAssessment {
+  normal,
+  investigate,
+  suspicious;
+
+  String get label {
+    switch (this) {
+      case ConnectionAssessment.normal:
+        return 'NORMAL';
+      case ConnectionAssessment.investigate:
+        return 'NEEDS INVESTIGATION';
+      case ConnectionAssessment.suspicious:
+        return 'SUSPICIOUS';
+    }
+  }
+}
+
+/// A real observed connection from RatVpnService (Kotlin) — actual process,
+/// remote IP/port/protocol, and connection persistence, not a byte-usage
+/// summary. See `ConnectionMonitor` for the correlation rules that decide
+/// [assessment].
+class ConnectionEvidence {
+  final String protocol; // "TCP" | "UDP"
+  final String packageName;
+  final String appName;
+  final String remoteAddress;
+  final int remotePort;
+  final DateTime firstSeen;
+  final DateTime lastSeen;
+  final int bytesSent;
+  final int bytesReceived;
+  final int packetCount;
+  final int reconnectCount;
+  final bool isActive;
+  final ConnectionAssessment assessment;
+  final List<String> reasons;
+
+  const ConnectionEvidence({
+    required this.protocol,
+    required this.packageName,
+    required this.appName,
+    required this.remoteAddress,
+    required this.remotePort,
+    required this.firstSeen,
+    required this.lastSeen,
+    required this.bytesSent,
+    required this.bytesReceived,
+    required this.packetCount,
+    required this.reconnectCount,
+    required this.isActive,
+    required this.assessment,
+    required this.reasons,
+  });
+
+  Duration get duration => lastSeen.difference(firstSeen);
+
+  /// Re-observed across enough consecutive polls to call it a persistent /
+  /// repeated communication pattern, rather than a one-off request.
+  bool get isPersistent => reconnectCount >= 2 || duration.inMinutes >= 2;
+
+  factory ConnectionEvidence.fromMap(Map<String, dynamic> m) {
+    return ConnectionEvidence(
+      protocol: m['protocol'] as String? ?? 'TCP',
+      packageName: m['packageName'] as String? ?? 'unknown',
+      appName: m['appName'] as String? ?? 'Unknown',
+      remoteAddress: m['remoteAddress'] as String? ?? '',
+      remotePort: (m['remotePort'] as num?)?.toInt() ?? 0,
+      firstSeen: DateTime.fromMillisecondsSinceEpoch(
+        (m['firstSeenMs'] as num?)?.toInt() ?? 0,
+      ),
+      lastSeen: DateTime.fromMillisecondsSinceEpoch(
+        (m['lastSeenMs'] as num?)?.toInt() ?? 0,
+      ),
+      bytesSent: (m['bytesSent'] as num?)?.toInt() ?? 0,
+      bytesReceived: (m['bytesReceived'] as num?)?.toInt() ?? 0,
+      packetCount: (m['packetCount'] as num?)?.toInt() ?? 0,
+      reconnectCount: (m['reconnectCount'] as num?)?.toInt() ?? 0,
+      isActive: m['isActive'] as bool? ?? false,
+      // Assessment/reasons are filled in by ConnectionMonitor's correlation
+      // pass, not the raw platform-channel map.
+      assessment: ConnectionAssessment.normal,
+      reasons: const [],
+    );
+  }
+
+  ConnectionEvidence copyWith({
+    ConnectionAssessment? assessment,
+    List<String>? reasons,
+  }) => ConnectionEvidence(
+    protocol: protocol,
+    packageName: packageName,
+    appName: appName,
+    remoteAddress: remoteAddress,
+    remotePort: remotePort,
+    firstSeen: firstSeen,
+    lastSeen: lastSeen,
+    bytesSent: bytesSent,
+    bytesReceived: bytesReceived,
+    packetCount: packetCount,
+    reconnectCount: reconnectCount,
+    isActive: isActive,
+    assessment: assessment ?? this.assessment,
+    reasons: reasons ?? this.reasons,
+  );
+}
+
 // ── Runtime Event Model ────────────────────────────────────────────────────
 
 class RuntimeEvent {

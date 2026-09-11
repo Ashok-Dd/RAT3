@@ -8,6 +8,7 @@ import 'package:rat3/data/services/notification_service.dart';
 import 'package:rat3/data/services/platform_channel_service.dart';
 import 'package:rat3/data/services/storage_service.dart';
 import 'package:rat3/layers/alert_engine/alert_engine.dart';
+import 'package:rat3/layers/connection_monitor/connection_monitor.dart';
 import 'package:rat3/layers/network_monitor/network_monitor.dart';
 import 'package:rat3/layers/permission_tracker/permission_tracker.dart';
 import 'package:rat3/layers/risk_engine/risk_engine.dart';
@@ -31,6 +32,7 @@ class AppController extends ChangeNotifier {
   late final PermissionTracker permissionTracker;
   late final AlertEngine alertEngine;
   late final RiskEngine riskEngine;
+  late final ConnectionMonitor connectionMonitor;
 
   // ── State ──────────────────────────────────────────────────────────────────
   RiskScore _riskScore = RiskScore.initial;
@@ -41,6 +43,10 @@ class AppController extends ChangeNotifier {
 
   List<NetworkConnection> _connections = [];
   List<NetworkConnection> get connections => _connections;
+
+  List<ConnectionEvidence> _connectionEvidence = [];
+  List<ConnectionEvidence> get connectionEvidence => _connectionEvidence;
+  bool get isConnectionMonitorActive => connectionMonitor.isActive;
 
   bool _isMonitoringEnabled = true;
   bool get isMonitoringEnabled => _isMonitoringEnabled;
@@ -94,6 +100,7 @@ class AppController extends ChangeNotifier {
       runtimeMonitor = RuntimeMonitor(platform: platformService);
       networkMonitor = NetworkMonitor(platform: platformService);
       permissionTracker = PermissionTracker(platform: platformService);
+      connectionMonitor = ConnectionMonitor(platform: platformService);
 
       alertEngine = AlertEngine(
         notificationService: notificationService,
@@ -112,11 +119,17 @@ class AppController extends ChangeNotifier {
       alertEngine.subscribeToLayer(runtimeMonitor.alerts);
       alertEngine.subscribeToLayer(networkMonitor.alerts);
       alertEngine.subscribeToLayer(permissionTracker.alerts);
+      alertEngine.subscribeToLayer(connectionMonitor.alerts);
 
       // Subscribe UI state to streams
       _subs.add(alertEngine.alertStream.listen(_onAlertsUpdated));
       _subs.add(riskEngine.scoreStream.listen(_onScoreUpdated));
       _subs.add(networkMonitor.connections.listen(_onNewConnection));
+      _subs.add(connectionMonitor.connections.listen(_onConnectionEvidenceUpdated));
+
+      // Reflect a connection monitor already running from a previous session
+      // (the foreground service can outlive the Flutter process).
+      unawaited(connectionMonitor.syncActiveState());
 
       // Restore persisted alerts
       _alerts = alertEngine.allAlerts;
@@ -270,6 +283,41 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _onConnectionEvidenceUpdated(List<ConnectionEvidence> evidence) {
+    _connectionEvidence = evidence;
+    notifyListeners();
+  }
+
+  // ── Real-time Connection Monitor (optional, user-enabled VPN) ──────────────
+
+  /// Triggers the system VPN consent dialog if needed. Returns false if the
+  /// user declined or the platform failed to start it.
+  Future<bool> enableConnectionMonitor() async {
+    final started = await connectionMonitor.enable();
+    notifyListeners();
+    return started;
+  }
+
+  Future<void> disableConnectionMonitor() async {
+    await connectionMonitor.disable();
+    _connectionEvidence = [];
+    notifyListeners();
+  }
+
+  /// Called after each "Scan All Apps" run so the connection monitor can
+  /// correlate a connection with an app the App Trust Engine has already
+  /// flagged, instead of judging network activity in isolation.
+  void updateUntrustedPackages(List<ScannedApp> apps) {
+    connectionMonitor.untrustedPackages = apps
+        .where(
+          (a) =>
+              a.trustLevel != AppTrustLevel.trusted &&
+              a.trustLevel != AppTrustLevel.unknown,
+        )
+        .map((a) => a.packageName)
+        .toSet();
+  }
+
   // ── Settings ───────────────────────────────────────────────────────────────
 
   Future<void> resetRiskScore() async {
@@ -310,6 +358,7 @@ class AppController extends ChangeNotifier {
     networkMonitor.dispose();
     permissionTracker.dispose();
     riskEngine.dispose();
+    connectionMonitor.dispose();
     super.dispose();
   }
 }
