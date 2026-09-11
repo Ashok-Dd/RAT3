@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:rat3/core/theme/app_theme.dart';
 import 'package:rat3/core/utils/app_utils.dart';
 import 'package:rat3/data/services/platform_channel_service.dart';
+import 'package:rat3/presentation/onboarding/onboarding_screen.dart';
 
 /// NetworkScreen
 ///
@@ -12,7 +13,11 @@ import 'package:rat3/data/services/platform_channel_service.dart';
 /// PlatformChannelService directly. It does NOT depend on the scan
 /// cycle or AppController.connections, so it always shows real data.
 ///
-/// Data source: TrafficStats per-UID (Android API, always available).
+/// Data source: NetworkStatsManager per-UID (needs "usage access", requested
+/// during onboarding), falling back to TrafficStats per-UID — which is NOT
+/// reliably available on every device/kernel and can report 0 for everything.
+/// The app list is always shown regardless (even at 0 bytes) so this screen
+/// never looks empty; see the usage-access hint banner below.
 ///
 /// Each app entry shows:
 ///   • App name + package name
@@ -36,6 +41,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
   String? _error;
   List<_AppTraffic> _apps = [];
   DateTime? _lastLoaded;
+  bool _usageAccessGranted = true;
 
   // Filter state
   _Filter _filter = _Filter.all;
@@ -72,6 +78,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
       _error = null;
     });
     try {
+      final flags = await _platform.getSecurityFlags();
       final raw = await _platform.getAppNetworkUsage();
 
       final apps = <_AppTraffic>[];
@@ -92,6 +99,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
         _apps = apps;
         _lastLoaded = DateTime.now();
         _loading = false;
+        _usageAccessGranted = flags['hasUsageStatsPermission'] == true;
       });
     } catch (e) {
       setState(() {
@@ -203,6 +211,56 @@ class _NetworkScreenState extends State<NetworkScreen> {
               ],
             ),
           ),
+
+          // ── Usage-access hint ───────────────────────────────────────────
+          if (!_loading && _error == null && !_usageAccessGranted)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: GestureDetector(
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const OnboardingScreen(),
+                  ),
+                ),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.neonOrange.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: AppTheme.neonOrange.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.info_outline,
+                        size: 16,
+                        color: AppTheme.neonOrange,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Usage access is off, so per-app totals may read 0. Tap to grant it.',
+                          style: AppTheme.bodyMedium.copyWith(
+                            color: AppTheme.neonOrange,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.chevron_right,
+                        size: 16,
+                        color: AppTheme.neonOrange,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
 
           // ── Summary cards ───────────────────────────────────────────────
           if (!_loading && _error == null && _apps.isNotEmpty)

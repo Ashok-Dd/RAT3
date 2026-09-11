@@ -2,6 +2,8 @@ package com.example.rat3
 
 import android.app.ActivityManager
 import android.app.AppOpsManager
+import android.app.usage.NetworkStats
+import android.app.usage.NetworkStatsManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -10,6 +12,7 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.hardware.Sensor
 import android.hardware.SensorManager
+import android.net.ConnectivityManager
 import android.net.TrafficStats
 import android.os.BatteryManager
 import android.os.Build
@@ -1049,6 +1052,7 @@ class MainActivity : FlutterActivity() {
             val pm = packageManager
             val packages = pm.getInstalledPackages(0)
             val usageList = mutableListOf<Map<String, Any>>()
+            var anyRealData = false
 
             for (pkg in packages) {
                 try {
@@ -1063,11 +1067,13 @@ class MainActivity : FlutterActivity() {
                     if (isSystem && !isUpdatedSystem) continue
 
                     val uid = appInfo.uid
-                    val tx  = TrafficStats.getUidTxBytes(uid)
-                    val rx  = TrafficStats.getUidRxBytes(uid)
+                    val (tx, rx) = queryUidNetworkBytes(uid)
+                    if (tx > 0 || rx > 0) anyRealData = true
 
-                    if (tx <= 0 && rx <= 0) continue
-
+                    // Always include the app — even at 0 bytes. A per-app data source that
+                    // reports nothing (common: TrafficStats returns -1 "unsupported" on many
+                    // OEM kernels) must not make the whole screen look empty; the user should
+                    // still see which apps are installed, just with 0 usage.
                     val appName = try {
                         pm.getApplicationLabel(appInfo).toString()
                     } catch (_: Exception) { pkg.packageName }
@@ -1084,11 +1090,55 @@ class MainActivity : FlutterActivity() {
             }
 
             usageList.sortByDescending { (it["totalBytes"] as? Long) ?: 0L }
+            Log.i(TAG, "getAppNetworkUsage: ${usageList.size} apps, anyRealData=$anyRealData")
             result.success(usageList)
         } catch (e: Exception) {
             Log.e(TAG, "getAppNetworkUsage failed", e)
             result.error("NET_USAGE_ERROR", e.message, null)
         }
+    }
+
+    /**
+     * Per-UID network usage, in bytes. Tries [NetworkStatsManager] first (the modern,
+     * accurate source — reads the same accounting Settings > Data usage uses, covers WIFI +
+     * MOBILE, and needs the "usage access" special permission the app already requests during
+     * onboarding). Falls back to [TrafficStats] per-UID counters if that's unavailable; a
+     * negative ("unsupported") TrafficStats read is clamped to 0 rather than treated as data.
+     */
+    private fun queryUidNetworkBytes(uid: Int): Pair<Long, Long> {
+        try {
+            val nsm = getSystemService(Context.NETWORK_STATS_SERVICE) as? NetworkStatsManager
+            if (nsm != null) {
+                var tx = 0L
+                var rx = 0L
+                var queried = false
+                val end = System.currentTimeMillis()
+                val start = end - 30L * 24 * 60 * 60 * 1000 // last 30 days
+                @Suppress("DEPRECATION")
+                for (networkType in intArrayOf(ConnectivityManager.TYPE_WIFI, ConnectivityManager.TYPE_MOBILE)) {
+                    try {
+                        val bucket = NetworkStats.Bucket()
+                        nsm.queryDetailsForUid(networkType, null, start, end, uid).use { stats ->
+                            while (stats.hasNextBucket()) {
+                                stats.getNextBucket(bucket)
+                                tx += bucket.txBytes
+                                rx += bucket.rxBytes
+                            }
+                        }
+                        queried = true
+                    } catch (_: Exception) {
+                        // This network type unavailable or usage access not granted — skip it.
+                    }
+                }
+                if (queried) return tx to rx
+            }
+        } catch (_: Exception) {
+            // NetworkStatsManager unavailable on this device/API level — fall through.
+        }
+
+        val tx = TrafficStats.getUidTxBytes(uid).let { if (it < 0) 0L else it }
+        val rx = TrafficStats.getUidRxBytes(uid).let { if (it < 0) 0L else it }
+        return tx to rx
     }
 
     // ═══════════════════════════════════════════════════════════════════════
