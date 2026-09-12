@@ -12,6 +12,11 @@ It does this in two halves, documented separately in this folder:
 | [`pre-installation/`](pre-installation/README.md) | Scanning a single `.apk` file **before you install it** | You pick a file, or open it from a file manager |
 | [`post-installation/`](post-installation/README.md) | Watching the **live device** continuously **after** apps are already installed | Runs in the background all the time, once turned on |
 
+There's also one cross-cutting page that isn't about a single tab: **[RAT Malware Behavior
+Coverage](rat-behavior-coverage.md)** — a full list of real-world RAT/spyware behaviors,
+each one marked as covered, partially covered, not yet covered, or impossible to observe
+without root, with the honest reason behind every gap.
+
 These are genuinely separate engines with separate data, separate screens, and separate
 verdict systems — a file can pass the pre-installation scan and still get flagged later by
 the post-installation monitor if it starts behaving suspiciously after install (or vice
