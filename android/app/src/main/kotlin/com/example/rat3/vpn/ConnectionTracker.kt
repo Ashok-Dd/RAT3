@@ -29,6 +29,10 @@ class ConnectionTracker(private val context: Context) {
         var bytesReceived: Long = 0,
         var packetCount: Long = 0,
         var reconnectCount: Int = 0,
+        // Explicitly set false only by markClosed (TCP FIN/RST). UDP has no "close" signal, and
+        // even a closed TCP flow's record should stop reading as ACTIVE once it's actually old —
+        // isActive at read time (see snapshot()) also folds in recency, so this field alone is
+        // not the full story.
         var isActive: Boolean = true,
     )
 
@@ -88,13 +92,32 @@ class ConnectionTracker(private val context: Context) {
         connections["$protocol:$localPort:$remoteAddress:$remotePort"]?.isActive = false
     }
 
-    /** Snapshot for the platform channel. Drops entries not seen in the last 10 minutes so the
-     *  table doesn't grow unbounded across a long monitoring session. */
+    /** Snapshot for the platform channel.
+     *
+     * UDP has no "connection closed" signal, and even TCP flows can go quiet without ever
+     * reaching [markClosed] (a client that stops sending after the server's last byte, without a
+     * clean FIN/RST round-trip). Treating `isActive` as a flag that's only ever set once meant a
+     * connection touched once stayed "ACTIVE" forever, and the table only shrank on a 10-minute
+     * delay — on a real device this reached 100+ entries within a couple of minutes of ordinary
+     * browsing, well before anything aged out, visibly degrading the connection list's
+     * performance. `isActive` here is instead a recency check computed at read time; old entries
+     * are dropped from the table itself well before that.
+     */
     fun snapshot(): List<Connection> {
-        val cutoff = System.currentTimeMillis() - 10 * 60 * 1000L
-        val stale = connections.values.filter { !it.isActive && it.lastSeenMs < cutoff }
+        val now = System.currentTimeMillis()
+        val pruneCutoff = now - PRUNE_AFTER_MS
+        val stale = connections.values.filter { it.lastSeenMs < pruneCutoff }
         stale.forEach { connections.remove(it.key) }
-        return connections.values.sortedByDescending { it.lastSeenMs }
+
+        val activeCutoff = now - ACTIVE_WINDOW_MS
+        return connections.values
+            .onEach { it.isActive = it.isActive && it.lastSeenMs >= activeCutoff }
+            .sortedByDescending { it.lastSeenMs }
+    }
+
+    companion object {
+        private const val ACTIVE_WINDOW_MS = 20_000L
+        private const val PRUNE_AFTER_MS = 2 * 60 * 1000L
     }
 
     fun clear() = connections.clear()

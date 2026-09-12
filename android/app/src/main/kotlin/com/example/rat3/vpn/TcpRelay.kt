@@ -41,6 +41,7 @@ class TcpRelay(
         var ourSeq: Long = 0 // next sequence number WE will send
         var theirSeq: Long = 0 // next sequence number we EXPECT from the client (= our ack)
         val pendingWrites = ArrayDeque<ByteBuffer>()
+        var lastActivityMs: Long = System.currentTimeMillis()
     }
 
     private val flows = HashMap<String, Flow>()
@@ -57,6 +58,7 @@ class TcpRelay(
             return
         }
 
+        flows[k]?.lastActivityMs = System.currentTimeMillis()
         val flow = flows[k] ?: run {
             // Unknown flow with no SYN on record (e.g. relay restarted mid-connection) -- RST it
             // so the client's TCP stack doesn't hang waiting for a reply that will never come.
@@ -74,12 +76,14 @@ class TcpRelay(
         if (payloadLen > 0) {
             val payload = ByteArray(payloadLen)
             for (i in 0 until payloadLen) payload[i] = buf.get(tcp.payloadOffset + i)
-            try {
-                flow.channel.write(ByteBuffer.wrap(payload))
-            } catch (e: Exception) {
-                Log.w(TAG, "TCP write failed for $k: ${e.message}")
-                sendRst(ip.sourceAddress, ip.destAddress, tcp.destPort, tcp.sourcePort, flow.ourSeq)
-                closeFlow(k)
+            // The optimistic SYN-ACK (sent before the real destination connect() completes)
+            // means client data -- e.g. a TLS ClientHello -- can arrive before flow.channel is
+            // actually connected. Writing to a not-yet-connected SocketChannel throws
+            // NotYetConnectedException, which used to be treated as a hard failure (RST) even
+            // though the connection was fine; queue it instead and flush once connected.
+            if (!flow.channel.isConnected) {
+                flow.pendingWrites.add(ByteBuffer.wrap(payload))
+            } else if (!writeNow(flow, ByteBuffer.wrap(payload), k)) {
                 return
             }
             flow.theirSeq = tcp.seq + payloadLen
@@ -98,13 +102,18 @@ class TcpRelay(
         if (tcp.flagFin) {
             flow.theirSeq = tcp.seq + payloadLen + 1
             sendAckOnly(flow)
+            if (flow.state == State.CLOSING) {
+                // We'd already sent our own FIN (the real destination closed first) and this is
+                // the client's half of a simultaneous close -- both sides are now done.
+                closeFlow(k)
+                return
+            }
             try {
                 flow.channel.shutdownOutput()
             } catch (_: Exception) {}
-            if (flow.state != State.CLOSING) {
-                flow.state = State.CLOSING
-                sendFin(flow)
-            }
+            flow.state = State.CLOSING
+            sendFin(flow)
+            return
         }
 
         if (tcp.flagAck && flow.state == State.SYN_RECEIVED) {
@@ -167,6 +176,13 @@ class TcpRelay(
         try {
             if (flow.channel.finishConnect()) {
                 flow.channel.register(selector, SelectionKey.OP_READ, this to k)
+                // Flush anything the client sent while the real connect() was still pending
+                // (see onPacket's isConnected check) -- in order, since pendingWrites is a FIFO
+                // queue of already-parsed segments.
+                while (flow.pendingWrites.isNotEmpty()) {
+                    val buf = flow.pendingWrites.removeFirst()
+                    if (!writeNow(flow, buf, k)) return
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "TCP connect failed for $k: ${e.message}")
@@ -175,8 +191,23 @@ class TcpRelay(
         }
     }
 
+    /** Writes to the real socket, tearing the flow down (RST to the client) on genuine failure.
+     *  Returns false if the flow was closed as a result -- callers must stop touching `flow`. */
+    private fun writeNow(flow: Flow, data: ByteBuffer, k: String): Boolean {
+        return try {
+            flow.channel.write(data)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "TCP write failed for $k: ${e.message}")
+            sendRst(flow.clientAddr, flow.destAddr, flow.destPort, flow.clientPort, flow.ourSeq)
+            closeFlow(k)
+            false
+        }
+    }
+
     fun onReadable(k: String) {
         val flow = flows[k] ?: return
+        flow.lastActivityMs = System.currentTimeMillis()
         val buf = ByteBuffer.allocate(MSS)
         val n = try {
             flow.channel.read(buf)
@@ -308,8 +339,19 @@ class TcpRelay(
         flows.keys.toList().forEach { closeFlow(it) }
     }
 
+    /** Closes flows that have gone quiet for too long. Catches sockets that should have been
+     *  closed by a clean FIN/FIN-ACK exchange but weren't (this relay doesn't track the exact
+     *  final ACK -- see the FIN handling in [onPacket]), so a normal request/response cycle
+     *  doesn't leak a [SocketChannel] for the rest of the monitoring session. Call periodically,
+     *  not per-packet. */
+    fun reapStale(now: Long) {
+        val idle = flows.entries.filter { now - it.value.lastActivityMs > IDLE_TIMEOUT_MS }
+        idle.forEach { closeFlow(it.key) }
+    }
+
     companion object {
         private const val TAG = "RAT3.TcpRelay"
         private const val MSS = 1400
+        private const val IDLE_TIMEOUT_MS = 60_000L
     }
 }

@@ -247,16 +247,36 @@ class _NetworkScreenState extends State<NetworkScreen> {
               ),
             ),
           )
-        else
-          ...filtered.map(
-            (c) => _ConnectionCard(
-              connection: c,
-              onTap: () => _showConnectionDetail(c),
+        else ...[
+          // Kotlin already sorts by most-recently-seen first, so capping here keeps the most
+          // relevant entries. Rendering everything unbounded (a session can accumulate hundreds
+          // of short-lived flows within minutes of ordinary browsing) visibly janks the list.
+          ...filtered
+              .take(_maxRenderedConnections)
+              .map(
+                (c) => _ConnectionCard(
+                  connection: c,
+                  onTap: () => _showConnectionDetail(c),
+                ),
+              ),
+          if (filtered.length > _maxRenderedConnections)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Center(
+                child: Text(
+                  '+ ${filtered.length - _maxRenderedConnections} more (showing most recent $_maxRenderedConnections)',
+                  style: AppTheme.labelSmall.copyWith(
+                    color: AppTheme.textMuted,
+                  ),
+                ),
+              ),
             ),
-          ),
+        ],
       ],
     );
   }
+
+  static const _maxRenderedConnections = 40;
 
   void _showConnectionDetail(ConnectionEvidence c) {
     showModalBottomSheet(

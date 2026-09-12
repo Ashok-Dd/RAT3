@@ -19,13 +19,15 @@ class UdpRelay(
     private val tracker: ConnectionTracker,
     private val writeToTun: (ByteArray) -> Unit,
 ) {
-    private data class Flow(
+    private class Flow(
         val channel: DatagramChannel,
         val clientAddr: ByteArray,
         val clientPort: Int,
         val destAddr: ByteArray,
         val destPort: Int,
-    )
+    ) {
+        var lastActivityMs: Long = System.currentTimeMillis()
+    }
 
     // Keyed by "clientPort:destAddr:destPort" -- one UDP "flow" per unique 3-tuple from our side.
     private val flows = HashMap<String, Flow>()
@@ -45,6 +47,7 @@ class UdpRelay(
             Flow(channel, ip.sourceAddress, udp.sourcePort, ip.destAddress, udp.destPort)
         }
 
+        flow.lastActivityMs = System.currentTimeMillis()
         try {
             flow.channel.write(ByteBuffer.wrap(payload))
         } catch (e: Exception) {
@@ -67,6 +70,7 @@ class UdpRelay(
     /** Called from the selector loop when a flow's channel has data to read. */
     fun onReadable(key: String) {
         val flow = flows[key] ?: return
+        flow.lastActivityMs = System.currentTimeMillis()
         val buf = ByteBuffer.allocate(32 * 1024)
         val n = try {
             flow.channel.read(buf)
@@ -109,7 +113,17 @@ class UdpRelay(
         flows.clear()
     }
 
+    /** Closes UDP flows that have gone quiet for too long. UDP has no "connection closed"
+     *  signal at all, so without this every distinct (port, destination) pair a client ever
+     *  used -- one per DNS query, one per QUIC connection, etc. -- would keep its
+     *  DatagramChannel open for the rest of the monitoring session. Call periodically. */
+    fun reapStale(now: Long) {
+        val idle = flows.entries.filter { now - it.value.lastActivityMs > IDLE_TIMEOUT_MS }
+        idle.forEach { closeFlow(it.key) }
+    }
+
     companion object {
         private const val TAG = "RAT3.UdpRelay"
+        private const val IDLE_TIMEOUT_MS = 30_000L
     }
 }

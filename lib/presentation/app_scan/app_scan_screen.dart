@@ -440,46 +440,50 @@ class _AppScanScreenState extends State<AppScanScreen>
         children: [
           Row(
             children: [
-              _summaryChip(
-                r.maliciousApps.length.toString(),
-                'MALICIOUS',
-                AppTheme.alertRed,
+              Expanded(
+                child: _summaryChip(
+                  r.maliciousApps.length.toString(),
+                  'MALICIOUS',
+                  AppTheme.alertRed,
+                ),
               ),
-              const SizedBox(width: 8),
-              _summaryChip(
-                r.suspiciousApps.length.toString(),
-                'SUSPICIOUS',
-                AppTheme.alertOrange,
+              const SizedBox(width: 6),
+              Expanded(
+                child: _summaryChip(
+                  r.suspiciousApps.length.toString(),
+                  'SUSPICIOUS',
+                  AppTheme.alertOrange,
+                ),
               ),
-              const SizedBox(width: 8),
-              _summaryChip(
-                r.needsReviewApps.length.toString(),
-                'REVIEW',
-                AppTheme.neonCyan,
+              const SizedBox(width: 6),
+              Expanded(
+                child: _summaryChip(
+                  r.needsReviewApps.length.toString(),
+                  'REVIEW',
+                  AppTheme.neonCyan,
+                ),
               ),
-              const SizedBox(width: 8),
-              _summaryChip(
-                r.trustedApps.length.toString(),
-                'TRUSTED',
-                AppTheme.neonGreen,
+              const SizedBox(width: 6),
+              Expanded(
+                child: _summaryChip(
+                  r.trustedApps.length.toString(),
+                  'TRUSTED',
+                  AppTheme.neonGreen,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Text(
+                '${r.totalApps} apps scanned',
+                style: AppTheme.labelSmall.copyWith(color: AppTheme.textMuted),
               ),
               const Spacer(),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '${r.totalApps} apps scanned',
-                    style: AppTheme.labelSmall.copyWith(
-                      color: AppTheme.textMuted,
-                    ),
-                  ),
-                  Text(
-                    AppFormatter.formatTimeAgo(r.scannedAt),
-                    style: AppTheme.labelSmall.copyWith(
-                      color: AppTheme.textMuted,
-                    ),
-                  ),
-                ],
+              Text(
+                AppFormatter.formatTimeAgo(r.scannedAt),
+                style: AppTheme.labelSmall.copyWith(color: AppTheme.textMuted),
               ),
             ],
           ),
@@ -498,13 +502,14 @@ class _AppScanScreenState extends State<AppScanScreen>
   }
 
   Widget _summaryChip(String count, String label, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
     decoration: BoxDecoration(
       color: color.withValues(alpha: 0.12),
       borderRadius: BorderRadius.circular(6),
       border: Border.all(color: color.withValues(alpha: 0.4)),
     ),
     child: Column(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Text(
           count,
@@ -515,10 +520,13 @@ class _AppScanScreenState extends State<AppScanScreen>
         ),
         Text(
           label,
+          textAlign: TextAlign.center,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
           style: AppTheme.labelSmall.copyWith(
             color: color,
             fontSize: 9,
-            letterSpacing: 1,
+            letterSpacing: 0.5,
           ),
         ),
       ],

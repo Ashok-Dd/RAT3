@@ -144,12 +144,24 @@ class RatVpnService : VpnService() {
 
     private fun selectorLoop() {
         val sel = selector ?: return
+        var lastReap = 0L
         while (running.get()) {
             val n = try {
                 sel.select(1000)
             } catch (e: Exception) {
                 if (running.get()) Log.w(TAG, "selector.select failed: ${e.message}")
                 break
+            }
+            // Closes flows nothing has touched in a while -- without this, a normal TCP close
+            // that doesn't hit this relay's exact FIN/ACK handling (see TcpRelay's doc comment)
+            // or a UDP flow (which has no "closed" signal at all) would keep its socket open for
+            // the rest of the monitoring session. Runs on the same ~1s cadence as select()'s
+            // timeout, which is frequent enough without needing a separate timer.
+            val now = System.currentTimeMillis()
+            if (now - lastReap > 5_000L) {
+                lastReap = now
+                tcpRelay.reapStale(now)
+                udpRelay.reapStale(now)
             }
             if (n == 0) continue
             val it = sel.selectedKeys().iterator()
