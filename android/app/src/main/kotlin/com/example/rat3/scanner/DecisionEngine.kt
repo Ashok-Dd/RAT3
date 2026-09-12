@@ -99,7 +99,7 @@ class DecisionEngine(
                     append("A known malware signature or reputation hit was found. ")
                 }
                 if (mlVerdict == "malware") {
-                    append("The ML ensemble classified it as malware ($mlVotes/5 models agree). ")
+                    append("The ML ensemble classified it as malware ($mlVotes/4 models agree). ")
                 }
                 append("Installation is strongly discouraged.")
             }
