@@ -14,6 +14,9 @@ package com.example.rat3.scanner
  *
  *   TRUST BASELINE — a Play-Store-installed, established app with no accessibility+
  *     overlay/admin/persistence combo is always TRUSTED, no matter its permissions or activity.
+ *     An app the user has explicitly marked trusted (see [UserTrustStore]) is also TRUSTED
+ *     immediately, regardless of install source — this is the user overriding RAT3's own
+ *     judgment, not RAT3 vouching for the app itself.
  *   WEAK indicators (sideloaded, recent install, old target SDK…) never escalate alone.
  *   MEDIUM indicators (Private Data Access: can read SMS / notifications / on-screen content)
  *     reach NEEDS_REVIEW alone on an untrusted app, SUSPICIOUS with a second one.
@@ -40,6 +43,7 @@ object AppTrustEngine {
         val micActiveNow: Boolean,
         val hasNotificationAccess: Boolean,
         val blocklistHit: Boolean,
+        val userMarkedTrusted: Boolean = false,
     )
 
     data class Assessment(
@@ -59,7 +63,7 @@ object AppTrustEngine {
 
         val abuseCombo = f.hasAccessibility &&
             (f.overlayGranted || f.hasDeviceAdmin || f.hasBootPersistence)
-        val isTrusted = isPlayStoreInstall && !isRecentInstall && !abuseCombo
+        val isTrusted = f.userMarkedTrusted || (isPlayStoreInstall && !isRecentInstall && !abuseCombo)
 
         val evidence = mutableListOf<Evidence>()
         val privateDataAccess = mutableListOf<String>()
@@ -140,6 +144,7 @@ object AppTrustEngine {
         }
         val evidenceText = (confirmed?.let { listOf(it) } ?: emptyList()) + evidence.map { it.text }
         val trustReason = when {
+            f.userMarkedTrusted -> "Trusted by you — added to your trusted apps list, scanning skipped"
             isTrusted -> "Trusted — installed from Play Store, established, no privileged capability combination detected"
             evidenceText.isEmpty() -> "Not installed from Play Store, but no other indicators found"
             else -> evidenceText.first()

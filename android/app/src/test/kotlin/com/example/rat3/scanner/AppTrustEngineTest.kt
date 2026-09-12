@@ -26,6 +26,7 @@ class AppTrustEngineTest {
         micActiveNow: Boolean = false,
         hasNotificationAccess: Boolean = false,
         blocklistHit: Boolean = false,
+        userMarkedTrusted: Boolean = false,
     ) = AppTrustEngine.AppFacts(
         installSource = installSource,
         installDaysAgo = installDaysAgo,
@@ -39,6 +40,7 @@ class AppTrustEngineTest {
         micActiveNow = micActiveNow,
         hasNotificationAccess = hasNotificationAccess,
         blocklistHit = blocklistHit,
+        userMarkedTrusted = userMarkedTrusted,
     )
 
     // ── The exact reported false positives ──────────────────────────────────
@@ -225,5 +227,40 @@ class AppTrustEngineTest {
         // Play-Store app -- confirms the gate is `!isTrusted && blocklistHit`, not just `blocklistHit`.
         val a = AppTrustEngine.assess(trustedFacts(blocklistHit = true))
         assertEquals("TRUSTED", a.trustLevel)
+    }
+
+    // ── User-marked trust overrides everything else ─────────────────────────
+
+    @Test
+    fun `an app the user marked trusted is TRUSTED even with strong evidence against it`() {
+        // The user's own "I trust this app" choice (rat3_test's trusted-apps allowlist) is an
+        // explicit override, not just another weak signal -- it must win even over the
+        // accessibility+overlay banker-trojan combo that would otherwise be MALICIOUS_INDICATORS.
+        val a = AppTrustEngine.assess(
+            trustedFacts(
+                installSource = "sideloaded",
+                hasAccessibility = true,
+                overlayGranted = true,
+                userMarkedTrusted = true,
+            ),
+        )
+        assertEquals("TRUSTED", a.trustLevel)
+        assertTrue(a.trustReason.contains("Trusted by you"))
+        assertTrue(a.evidence.isEmpty())
+    }
+
+    @Test
+    fun `user-marked trust still shows Private Data Access informationally`() {
+        val a = AppTrustEngine.assess(
+            trustedFacts(
+                installSource = "sideloaded",
+                dangerousGranted = listOf("android.permission.READ_SMS"),
+                userMarkedTrusted = true,
+            ),
+        )
+        assertEquals("TRUSTED", a.trustLevel)
+        // Calm, informational -- shown regardless of trust level -- but not evidence.
+        assertTrue(a.privateDataAccess.any { it.contains("SMS") })
+        assertTrue(a.evidence.isEmpty())
     }
 }

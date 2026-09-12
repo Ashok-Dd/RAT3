@@ -297,6 +297,7 @@ class _SensorScanScreenState extends State<SensorScanScreen> {
                 app: s,
                 isCameraActive: _isCameraInUse,
                 isMicActive: _isMicInUse,
+                platform: _platform,
               ),
             ),
             const SizedBox(height: 20),
@@ -496,10 +497,12 @@ class _SuspectTile extends StatelessWidget {
   final Map<String, dynamic> app;
   final bool isCameraActive;
   final bool isMicActive;
+  final PlatformChannelService platform;
   const _SuspectTile({
     required this.app,
     required this.isCameraActive,
     required this.isMicActive,
+    required this.platform,
   });
 
   @override
@@ -509,6 +512,10 @@ class _SuspectTile extends StatelessWidget {
     final hasCamera = app['hasCameraGrant'] as bool? ?? false;
     final hasMic = app['hasMicGrant'] as bool? ?? false;
     final likely = app['isLikelyActive'] as bool? ?? false;
+    // Exact per-UID match from AudioManager.getActiveRecordingConfigurations — a real
+    // confirmation, not a guess. Camera has no equivalent per-UID API on Android, so a
+    // camera match here is always "candidate", never "confirmed".
+    final micConfirmed = (app['micConfirmed'] as bool? ?? false) && isMicActive;
 
     final parts = <String>[
       if (hasCamera && isCameraActive) 'camera',
@@ -526,74 +533,133 @@ class _SuspectTile extends StatelessWidget {
           width: 1.5,
         ),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 8,
-            height: 8,
-            margin: const EdgeInsets.only(right: 10),
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppTheme.alertRed,
-              boxShadow: [
-                BoxShadow(
-                  color: AppTheme.alertRed.withValues(alpha: 0.5),
-                  blurRadius: 6,
-                  spreadRadius: 1,
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                margin: const EdgeInsets.only(right: 10),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppTheme.alertRed,
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.alertRed.withValues(alpha: 0.5),
+                      blurRadius: 6,
+                      spreadRadius: 1,
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: AppTheme.bodyLarge.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: AppTheme.textPrimary,
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      micConfirmed
+                          ? '$name is using the microphone right now'
+                          : name,
+                      style: AppTheme.bodyLarge.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppTheme.textPrimary,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      pkg,
+                      style: AppTheme.bodyMedium.copyWith(
+                        color: AppTheme.textMuted,
+                        fontSize: 10,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    if (parts.isNotEmpty)
+                      Text(
+                        micConfirmed
+                            ? 'Confirmed — a real, live microphone session'
+                            : 'Has ${parts.join(" + ")} permission',
+                        style: AppTheme.bodyMedium.copyWith(
+                          color: AppTheme.alertRed.withValues(alpha: 0.8),
+                          fontSize: 10,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (micConfirmed)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 3,
                   ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  pkg,
-                  style: AppTheme.bodyMedium.copyWith(
-                    color: AppTheme.textMuted,
-                    fontSize: 10,
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                if (parts.isNotEmpty)
-                  Text(
-                    'Has ${parts.join(" + ")} permission',
-                    style: AppTheme.bodyMedium.copyWith(
-                      color: AppTheme.alertRed.withValues(alpha: 0.8),
-                      fontSize: 10,
+                  decoration: BoxDecoration(
+                    color: AppTheme.alertRed.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: AppTheme.alertRed.withValues(alpha: 0.5),
                     ),
                   ),
-              ],
+                  child: Text(
+                    'CONFIRMED',
+                    style: AppTheme.labelSmall.copyWith(
+                      color: AppTheme.alertRed,
+                      fontSize: 8,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                )
+              else if (likely)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: AppTheme.alertOrange.withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: AppTheme.alertOrange.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Text(
+                    'RECENTLY\nACTIVE',
+                    style: AppTheme.labelSmall.copyWith(
+                      color: AppTheme.alertOrange,
+                      fontSize: 8,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: OutlinedButton.icon(
+              onPressed: () async {
+                final opened = await platform.openAppSystemSettings(pkg);
+                if (!context.mounted || opened) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Could not open App Info')),
+                );
+              },
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppTheme.alertRed,
+                side: BorderSide(color: AppTheme.alertRed.withValues(alpha: 0.5)),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              icon: const Icon(Icons.settings_outlined, size: 14),
+              label: const Text(
+                'Open App Info to stop it',
+                style: TextStyle(fontSize: 11),
+              ),
             ),
           ),
-          if (likely)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-              decoration: BoxDecoration(
-                color: AppTheme.alertOrange.withValues(alpha: 0.15),
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color: AppTheme.alertOrange.withValues(alpha: 0.4),
-                ),
-              ),
-              child: Text(
-                'RECENTLY\nACTIVE',
-                style: AppTheme.labelSmall.copyWith(
-                  color: AppTheme.alertOrange,
-                  fontSize: 8,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ),
         ],
       ),
     );

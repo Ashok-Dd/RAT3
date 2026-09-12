@@ -103,6 +103,30 @@ overlay, on a sideloaded app) matches real-world malware families like SpyNote, 
 and Anubis closely enough that reaching the top verdict from it alone — without needing an
 unrelated third signal — is the intended, correct behavior.
 
+## Trusting an app yourself
+
+Every app card has a **Trust this app** action. Marking an app trusted is a separate,
+explicit override from the automatic Play-Store baseline above — it works for *any* app,
+sideloaded or not, and it means exactly what it says: *you've* vetted this app, not RAT3.
+Once marked, that app is immediately TRUSTED and every future scan skips it entirely — no
+AppOps calls, no APK hashing, no Permission Tracker naming — so RAT3's ongoing work stays
+focused on the apps you haven't already cleared yourself. A newly installed app is never on
+this list until you put it there, so every new install still goes through the full evidence
+ladder by default. Removing an app from your trusted list (the same action, toggled) puts it
+straight back through full evaluation on the next scan.
+
+## What RAT3 can actually do about a flagged app
+
+Every non-trusted app's detail view also has **Open App Info** (and **Uninstall**, for
+Suspicious/Malicious Indicators). Be clear about what these are: Android gives no unrooted,
+non-Device-Owner app a way to force-stop another app's process or silently revoke its
+permissions — that would require root, or enrolling RAT3 as a Device Owner, neither of
+which fits a normal security app you install from a store. **Open App Info** takes you
+straight to that exact app's system settings screen — Force Stop, Uninstall, and every
+permission toggle are then one more tap away, instead of you hunting for it yourself.
+**Uninstall** starts the system's uninstall confirmation dialog directly; you still have to
+tap through it, since no app — RAT3 included — can silently remove another one.
+
 ## Honesty notes
 
 - **The confirmed-match check only runs for apps that already failed the trust baseline** —
@@ -111,3 +135,5 @@ unrelated third signal — is the intended, correct behavior.
 - **The blocklist itself ships with placeholder entries**, same caveat as the
   pre-installation scanner's — the mechanism is real and correct; the data behind it would
   need a real threat-intelligence source in a production deployment.
+- **"Trust this app" is a statement about your own judgment, not a new fact RAT3 discovered**
+  — it silences future scans of that app, it doesn't retroactively mean the app is safe.

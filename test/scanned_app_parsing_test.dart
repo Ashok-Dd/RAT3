@@ -86,5 +86,16 @@ void main() {
       expect(app.rxBytes, 2048);
       expect(app.backgroundTimeHrs, 1.5);
     });
+
+    test('isUserTrusted defaults to false when absent', () {
+      final app = ScannedApp.fromMap(rawApp());
+      expect(app.isUserTrusted, isFalse);
+    });
+
+    test('isUserTrusted is carried through when present', () {
+      final raw = rawApp()..['isUserTrusted'] = true;
+      final app = ScannedApp.fromMap(raw);
+      expect(app.isUserTrusted, isTrue);
+    });
   });
 }

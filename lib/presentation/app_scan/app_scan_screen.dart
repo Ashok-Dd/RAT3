@@ -52,6 +52,7 @@ class AppScanScreen extends StatefulWidget {
 class _AppScanScreenState extends State<AppScanScreen>
     with SingleTickerProviderStateMixin {
   late final AppScannerService _scanner;
+  final PlatformChannelService _platform = PlatformChannelService();
   late final TabController _tabCtrl;
 
   double _progress = 0.0;
@@ -408,21 +409,29 @@ class _AppScanScreenState extends State<AppScanScreen>
                 apps: r.maliciousApps,
                 level: AppTrustLevel.maliciousIndicators,
                 netUsage: r.networkUsage,
+                platform: _platform,
+                onTrustChanged: _startScan,
               ),
               _AppListTab(
                 apps: r.suspiciousApps,
                 level: AppTrustLevel.suspicious,
                 netUsage: r.networkUsage,
+                platform: _platform,
+                onTrustChanged: _startScan,
               ),
               _AppListTab(
                 apps: r.needsReviewApps,
                 level: AppTrustLevel.needsReview,
                 netUsage: r.networkUsage,
+                platform: _platform,
+                onTrustChanged: _startScan,
               ),
               _AppListTab(
                 apps: r.trustedApps,
                 level: AppTrustLevel.trusted,
                 netUsage: r.networkUsage,
+                platform: _platform,
+                onTrustChanged: _startScan,
               ),
             ],
           ),
@@ -542,11 +551,15 @@ class _AppListTab extends StatelessWidget {
   final List<ScannedApp> apps;
   final AppTrustLevel level;
   final List<AppNetworkUsage> netUsage;
+  final PlatformChannelService platform;
+  final VoidCallback onTrustChanged;
 
   const _AppListTab({
     required this.apps,
     required this.level,
     required this.netUsage,
+    required this.platform,
+    required this.onTrustChanged,
   });
 
   @override
@@ -605,7 +618,12 @@ class _AppListTab extends StatelessWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (_) => _AppDetailSheet(app: app, netUsage: net),
+      builder: (_) => _AppDetailSheet(
+        app: app,
+        netUsage: net,
+        platform: platform,
+        onTrustChanged: onTrustChanged,
+      ),
     );
   }
 }
@@ -715,6 +733,8 @@ class _AppTile extends StatelessWidget {
                     spacing: 4,
                     runSpacing: 4,
                     children: [
+                      if (app.isUserTrusted)
+                        _tag('TRUSTED BY YOU', AppTheme.neonGreen),
                       if (app.isSideloaded)
                         _tag('NOT PLAY STORE', AppTheme.alertOrange),
                       if (app.isRecentInstall) _tag('NEW', AppTheme.neonCyan),
@@ -757,8 +777,52 @@ class _AppTile extends StatelessWidget {
 class _AppDetailSheet extends StatelessWidget {
   final ScannedApp app;
   final AppNetworkUsage? netUsage;
+  final PlatformChannelService platform;
+  final VoidCallback onTrustChanged;
 
-  const _AppDetailSheet({required this.app, this.netUsage});
+  const _AppDetailSheet({
+    required this.app,
+    this.netUsage,
+    required this.platform,
+    required this.onTrustChanged,
+  });
+
+  Future<void> _toggleTrust(BuildContext context) async {
+    final nowTrusted = !app.isUserTrusted;
+    await platform.setUserTrusted(app.packageName, nowTrusted);
+    if (!context.mounted) return;
+    Navigator.pop(context);
+    onTrustChanged();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          nowTrusted
+              ? '${app.appName} added to your trusted apps — RAT3 will stop scanning it'
+              : '${app.appName} removed from your trusted apps',
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openAppInfo(BuildContext context) async {
+    final opened = await platform.openAppSystemSettings(app.packageName);
+    if (!context.mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not open App Info')));
+    }
+  }
+
+  Future<void> _requestUninstall(BuildContext context) async {
+    final opened = await platform.requestUninstallApp(app.packageName);
+    if (!context.mounted) return;
+    if (!opened) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not open uninstall dialog')));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -852,6 +916,66 @@ class _AppDetailSheet extends StatelessWidget {
             ),
 
             const SizedBox(height: 20),
+
+            // Actions — the realistic ceiling for what an unrooted app can do about another
+            // app: RAT3 cannot force-stop a process or silently revoke a permission (Android
+            // blocks that without root or Device Owner), so these open the exact system
+            // screen for it in one tap instead of leaving you to find it yourself.
+            _sectionTitle('Actions', Icons.bolt_outlined, AppTheme.textSecondary),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  onPressed: () => _toggleTrust(context),
+                  icon: Icon(
+                    app.isUserTrusted
+                        ? Icons.shield
+                        : Icons.shield_outlined,
+                    size: 16,
+                  ),
+                  label: Text(
+                    app.isUserTrusted
+                        ? 'Remove from trusted'
+                        : 'Trust this app',
+                  ),
+                ),
+                if (app.trustLevel != AppTrustLevel.trusted) ...[
+                  OutlinedButton.icon(
+                    onPressed: () => _openAppInfo(context),
+                    icon: const Icon(Icons.settings_outlined, size: 16),
+                    label: const Text('Open App Info'),
+                  ),
+                  if (app.trustLevel == AppTrustLevel.suspicious ||
+                      app.trustLevel == AppTrustLevel.maliciousIndicators)
+                    OutlinedButton.icon(
+                      onPressed: () => _requestUninstall(context),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.alertRed,
+                        side: BorderSide(
+                          color: AppTheme.alertRed.withValues(alpha: 0.5),
+                        ),
+                      ),
+                      icon: const Icon(Icons.delete_outline, size: 16),
+                      label: const Text('Uninstall'),
+                    ),
+                ],
+              ],
+            ),
+            if (app.trustLevel != AppTrustLevel.trusted) ...[
+              const SizedBox(height: 6),
+              Text(
+                'RAT3 can\'t force-stop or silently revoke access from another app — '
+                'Android blocks that without root. These open the exact screen so you '
+                'can do it yourself in one more tap.',
+                style: AppTheme.bodyMedium.copyWith(
+                  color: AppTheme.textMuted,
+                  fontSize: 10,
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
 
             // Why RAT3 reached this assessment
             _sectionTitle('Assessment', Icons.fact_check_outlined, color),

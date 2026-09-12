@@ -33,6 +33,7 @@ import com.example.rat3.scanner.Layer2PermissionMismatch
 import com.example.rat3.scanner.Layer3SignatureScanner
 import com.example.rat3.scanner.Layer4MlClassifier
 import com.example.rat3.scanner.Reputation
+import com.example.rat3.scanner.UserTrustStore
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -70,6 +71,12 @@ class MainActivity : FlutterActivity() {
         private const val REQUEST_VPN_PREPARE = 1002
         private const val APK_MIME = "application/vnd.android.package-archive"
         private const val CACHE_SUBDIR = "apk_scan"
+
+        // A persistent foreground service (the way a RAT keeps recording after you close the
+        // app and lock the screen) can run for hours with no new UsageEvents entry until it
+        // stops, so "is it active now" needs a much wider lookback than Activity foreground
+        // (which reliably pairs MOVE_TO_FOREGROUND with MOVE_TO_BACKGROUND within seconds).
+        private const val FOREGROUND_SERVICE_LOOKBACK_MS = 6 * 60 * 60 * 1000L
     }
 
     // ── pre-install scanner state ───────────────────────────────────────────────────────
@@ -205,6 +212,10 @@ class MainActivity : FlutterActivity() {
                     "stopVpnMonitor"                       -> handleStopVpnMonitor(result)
                     "isVpnMonitorActive"                   -> result.success(com.example.rat3.vpn.RatVpnService.isRunning())
                     "getActiveConnections"                 -> handleGetActiveConnections(result)
+                    "getUserTrustedPackages"               -> result.success(UserTrustStore.getTrustedPackages(applicationContext).toList())
+                    "setUserTrusted"                       -> handleSetUserTrusted(call, result)
+                    "openAppSystemSettings"                -> handleOpenAppSystemSettings(call, result)
+                    "requestUninstallApp"                  -> handleRequestUninstallApp(call, result)
                     else                                  -> result.notImplemented()
                 }
             }
@@ -251,6 +262,7 @@ class MainActivity : FlutterActivity() {
                 val accessibilityActivePkgs = getActiveAccessibilityServicePackages()
                 val deviceAdminActivePkgs = getActiveDeviceAdminPackages()
                 val blocklist = try { Reputation.loadBlocklist(applicationContext) } catch (_: Exception) { emptySet() }
+                val userTrustedPkgs = UserTrustStore.getTrustedPackages(applicationContext)
 
                 val results = mutableListOf<Map<String, Any?>>()
 
@@ -292,23 +304,30 @@ class MainActivity : FlutterActivity() {
                         val rxBytes = TrafficStats.getUidRxBytes(uid).let { if (it >= 0) it else 0L }
 
                         // ── Real (not proxy) capability checks ───────────────
+                        val userMarkedTrusted = userTrustedPkgs.contains(pkgName)
                         val hasAccessibility = accessibilityActivePkgs.contains(pkgName)
                         val hasDeviceAdmin = deviceAdminActivePkgs.contains(pkgName)
                         val hasBootPersistence = allPermissions.contains("android.permission.RECEIVE_BOOT_COMPLETED")
-                        val overlayGranted = try {
+                        val overlayGranted = !userMarkedTrusted && try {
                             aom.checkOpNoThrow(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW, uid, pkgName) == AppOpsManager.MODE_ALLOWED
                         } catch (_: Exception) { false }
-                        val camActiveNow = isInForegroundNow && try {
+
+                        // Skip everything below for an app the user already vetted, or one that
+                        // clears the automatic Play-Store baseline — there is nothing left to
+                        // check that could change a TRUSTED verdict, so don't spend an APK hash
+                        // read or two AppOps calls confirming what's already settled.
+                        val isTrusted = userMarkedTrusted || (isPlayStoreInstall && !isRecentInstall &&
+                            !(hasAccessibility && (overlayGranted || hasDeviceAdmin || hasBootPersistence)))
+
+                        val camActiveNow = !isTrusted && isInForegroundNow && try {
                             aom.checkOpNoThrow(AppOpsManager.OPSTR_CAMERA, uid, pkgName) == AppOpsManager.MODE_ALLOWED
                         } catch (_: Exception) { false }
-                        val micActiveNow = isInForegroundNow && try {
+                        val micActiveNow = !isTrusted && isInForegroundNow && try {
                             aom.checkOpNoThrow(AppOpsManager.OPSTR_RECORD_AUDIO, uid, pkgName) == AppOpsManager.MODE_ALLOWED
                         } catch (_: Exception) { false }
 
                         // ── Confirmed indicator: blocklist hash (skip the trusted fast-path
                         // apps to avoid hashing every installed APK on every scan) ──────────
-                        val isTrusted = isPlayStoreInstall && !isRecentInstall &&
-                            !(hasAccessibility && (overlayGranted || hasDeviceAdmin || hasBootPersistence))
                         var blocklistHit = false
                         if (!isTrusted && blocklist.isNotEmpty()) {
                             try {
@@ -331,6 +350,7 @@ class MainActivity : FlutterActivity() {
                                 micActiveNow = micActiveNow,
                                 hasNotificationAccess = notificationListenerPkgs.contains(pkgName),
                                 blocklistHit = blocklistHit,
+                                userMarkedTrusted = userMarkedTrusted,
                             ),
                         )
 
@@ -358,6 +378,7 @@ class MainActivity : FlutterActivity() {
                             "evidence"           to assessment.evidence,
                             "privateDataAccess"  to assessment.privateDataAccess,
                             "sortWeight"         to assessment.sortWeight,
+                            "isUserTrusted"      to userMarkedTrusted,
                         ))
                     } catch (e: Exception) {
                         Log.w(TAG, "scanAllApps: skip ${pkg.packageName}: ${e.message}")
@@ -375,29 +396,62 @@ class MainActivity : FlutterActivity() {
         }.start()
     }
 
-    /** Packages currently in the foreground (last event within the query window was
-     *  MOVE_TO_FOREGROUND). Shared by handleScanAllApps and handleGetUserAppsUsingSensors so
-     *  "active right now" means the same thing in both places. */
+    /** Packages "active right now" — either an Activity currently in the foreground, OR a
+     *  foreground service currently running (started, no matching stop yet). Shared by
+     *  handleScanAllApps, handleGetUserAppsUsingSensors, and handleCheckSensorInUse so "active
+     *  right now" means the same thing everywhere.
+     *
+     *  The service half of this exists specifically to catch a RAT-style pattern: an app whose
+     *  Activity you closed and whose screen you locked, but whose foreground service (mic/camera
+     *  capture, a persistent beacon) is still running. Activity-only detection — the previous
+     *  behavior here — would report that app as "not active" the whole time it kept recording.
+     */
     private fun queryForegroundNowSet(): Set<String> {
-        val foregroundNow = mutableSetOf<String>()
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return foregroundNow
+        val active = mutableSetOf<String>()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return active
+        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager ?: return active
+        val nowMs = System.currentTimeMillis()
+
+        // Activity foreground: a tight 60s window is correct here — MOVE_TO_FOREGROUND is
+        // reliably paired with MOVE_TO_BACKGROUND within seconds of the user leaving the app.
         try {
-            val nowMs = System.currentTimeMillis()
-            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-            val events = usm?.queryEvents(nowMs - 60_000L, nowMs) ?: return foregroundNow
-            val lastEventType = mutableMapOf<String, Int>()
+            val events = usm.queryEvents(nowMs - 60_000L, nowMs)
+            val lastType = mutableMapOf<String, Int>()
             val event = android.app.usage.UsageEvents.Event()
             while (events.hasNextEvent()) {
                 events.getNextEvent(event)
-                lastEventType[event.packageName] = event.eventType
+                lastType[event.packageName] = event.eventType
             }
-            for ((pkg, evType) in lastEventType) {
-                if (evType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND) foregroundNow.add(pkg)
+            lastType.forEach { (pkg, t) ->
+                if (t == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND) active.add(pkg)
             }
         } catch (e: Exception) {
-            Log.w(TAG, "queryForegroundNowSet failed: ${e.message}")
+            Log.w(TAG, "queryForegroundNowSet (activity) failed: ${e.message}")
         }
-        return foregroundNow
+
+        // Foreground service: a wide lookback, because a persistent service can legitimately
+        // run for hours with no new UsageEvents entry until it actually stops.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            try {
+                val events = usm.queryEvents(nowMs - FOREGROUND_SERVICE_LOOKBACK_MS, nowMs)
+                val lastType = mutableMapOf<String, Int>()
+                val event = android.app.usage.UsageEvents.Event()
+                while (events.hasNextEvent()) {
+                    events.getNextEvent(event)
+                    val t = event.eventType
+                    if (t == android.app.usage.UsageEvents.Event.FOREGROUND_SERVICE_START ||
+                        t == android.app.usage.UsageEvents.Event.FOREGROUND_SERVICE_STOP) {
+                        lastType[event.packageName] = t
+                    }
+                }
+                lastType.forEach { (pkg, t) ->
+                    if (t == android.app.usage.UsageEvents.Event.FOREGROUND_SERVICE_START) active.add(pkg)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "queryForegroundNowSet (service) failed: ${e.message}")
+            }
+        }
+        return active
     }
 
     /** Package names with an app-declared, currently-ENABLED notification listener service —
@@ -510,28 +564,28 @@ class MainActivity : FlutterActivity() {
                 val nowMs = System.currentTimeMillis()
 
                 // ══════════════════════════════════════════════════════════════
-                //  STEP 1 — Find which apps are in foreground RIGHT NOW
+                //  STEP 1 — Find which apps are active RIGHT NOW
                 //
-                //  UsageStatsManager.queryEvents() returns a stream of
-                //  MOVE_TO_FOREGROUND / MOVE_TO_BACKGROUND events with exact
-                //  timestamps. We query the last 60 seconds.
-                //  If the most recent event for a package is MOVE_TO_FOREGROUND
-                //  → that app is currently in foreground.
-                //
-                //  This is 100% public API, no @hide required.
+                //  "Active" means an Activity in the foreground OR a foreground service
+                //  still running (see queryForegroundNowSet's doc) — the service half matters
+                //  most here: an app whose screen you closed and whose phone you locked, but
+                //  whose mic/camera-holding foreground service is still going, must still
+                //  count as active. Exact mic attribution also comes from a real per-UID API,
+                //  not a proxy — see getActiveRecordingUids.
                 // ══════════════════════════════════════════════════════════════
 
-                // packageName → most recent foreground start time (ms)
-                val foregroundNow    = mutableSetOf<String>()  // currently in fg
-                val foregroundRecent = mutableSetOf<String>()  // was in fg last 60s
+                val foregroundNow = queryForegroundNowSet()
+                val micUids = getActiveRecordingUids()
+                val userTrustedPkgs = UserTrustStore.getTrustedPackages(applicationContext)
 
+                // "Recent" (was active in the last 60s, informational "RECENT FG" badge only)
+                // stays on the tighter Activity-only signal — it's a lower-stakes distinction.
+                val foregroundRecent = mutableSetOf<String>()
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
                     try {
-                        val usm = getSystemService(Context.USAGE_STATS_SERVICE)
-                            as? UsageStatsManager
+                        val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
                         val events = usm?.queryEvents(nowMs - 60_000L, nowMs)
                         if (events != null) {
-                            // Track the last event type per package
                             val lastEventType = mutableMapOf<String, Int>()
                             val lastEventTime = mutableMapOf<String, Long>()
                             val event = android.app.usage.UsageEvents.Event()
@@ -542,12 +596,9 @@ class MainActivity : FlutterActivity() {
                             }
                             for ((pkg, evType) in lastEventType) {
                                 val t = lastEventTime[pkg] ?: 0L
-                                // MOVE_TO_FOREGROUND = 1
                                 if (evType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND) {
-                                    foregroundNow.add(pkg)
                                     foregroundRecent.add(pkg)
                                 } else if (evType == android.app.usage.UsageEvents.Event.MOVE_TO_BACKGROUND) {
-                                    // Was in fg recently but just went to background
                                     if ((nowMs - t) < 60_000L) foregroundRecent.add(pkg)
                                 }
                             }
@@ -556,8 +607,9 @@ class MainActivity : FlutterActivity() {
                         Log.w(TAG, "UsageEvents query failed: ${e.message}")
                     }
                 }
+                foregroundRecent.addAll(foregroundNow)
 
-                Log.d(TAG, "Foreground NOW: $foregroundNow")
+                Log.d(TAG, "Foreground/service NOW: $foregroundNow")
                 Log.d(TAG, "Foreground RECENT: $foregroundRecent")
 
                 // ══════════════════════════════════════════════════════════════
@@ -590,6 +642,9 @@ class MainActivity : FlutterActivity() {
                     try {
                         val appInfo = pkg.applicationInfo ?: continue
                         if (pkg.packageName == packageName) continue
+                        // An app the user has vetted themselves gets no further scrutiny here —
+                        // this layer's whole purpose is naming untrusted apps.
+                        if (userTrustedPkgs.contains(pkg.packageName)) continue
 
                         val isSystem = (appInfo.flags and
                             android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
@@ -633,9 +688,11 @@ class MainActivity : FlutterActivity() {
                         val isInFgNow    = foregroundNow.contains(pkgName)
                         val isInFgRecent = foregroundRecent.contains(pkgName)
 
-                        // ACTIVE NOW: op allowed AND app is in foreground right now
+                        // ACTIVE NOW: op allowed AND (app is active right now OR — for mic
+                        // specifically — this exact UID has a live AudioRecord session, a real
+                        // per-UID API rather than a foreground proxy).
                         val isCameraActiveNow   = camAllowed && isInFgNow
-                        val isMicActiveNow      = micAllowed && isInFgNow
+                        val isMicActiveNow      = micAllowed && (isInFgNow || uid in micUids)
                         val isLocationActiveNow = locAllowed && isInFgNow
 
                         // RECENT: op allowed AND app was in foreground last 60s
@@ -713,13 +770,20 @@ class MainActivity : FlutterActivity() {
 
     private fun handleCheckSensorInUse(result: MethodChannel.Result) {
         Thread {
-            val isMicInUse    = checkMicInUse()
+            // Real per-UID mic attribution — exact, not a guess (see getActiveRecordingUids).
+            val micUids = getActiveRecordingUids()
+            val isMicInUse = micUids.isNotEmpty() || checkMicInUseViaProc()
             val isCameraInUse = checkCameraInUse()
+            // Camera has no per-UID API for a third-party app (Android doesn't expose one) —
+            // the best available signal is "active right now", used below to narrow candidates.
+            val activeNowSet = queryForegroundNowSet()
+            val userTrustedPkgs = UserTrustStore.getTrustedPackages(applicationContext)
 
-            Log.d(TAG, "SensorInUse: mic=$isMicInUse camera=$isCameraInUse")
+            Log.d(TAG, "SensorInUse: mic=$isMicInUse camera=$isCameraInUse micUids=$micUids")
 
-            // If a sensor IS in use, find which apps have that permission granted
-            // These are the "suspect" apps — one of them is the user
+            // If a sensor IS in use, find which apps have that permission granted.
+            // Mic: an exact UID match is a CONFIRMED hit. Camera: a candidate list, since
+            // Android gives no per-UID camera API — "active right now" narrows it, doesn't prove it.
             val suspectApps = mutableListOf<Map<String, Any>>()
 
             if (isMicInUse || isCameraInUse) {
@@ -736,6 +800,7 @@ class MainActivity : FlutterActivity() {
                     for (pkg in packages) {
                         try {
                             if (pkg.packageName == packageName) continue
+                            if (userTrustedPkgs.contains(pkg.packageName)) continue
                             val appInfo = pkg.applicationInfo ?: continue
                             val isSystem = (appInfo.flags and
                                 android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
@@ -770,6 +835,7 @@ class MainActivity : FlutterActivity() {
                                 }
                             }
 
+                            val micConfirmed = hasMicGranted && appInfo.uid in micUids
                             val isSuspect = (isCameraInUse && hasCameraGranted) ||
                                             (isMicInUse    && hasMicGranted)
                             if (!isSuspect) continue
@@ -778,8 +844,11 @@ class MainActivity : FlutterActivity() {
                                 pm.getApplicationLabel(appInfo).toString()
                             } catch (_: Exception) { pkg.packageName }
 
-                            // Also check foreground via UsageEvents (best effort)
-                            val isLikelyActive = isInForegroundRecently(pkg.packageName, 30_000L)
+                            // "Active right now" including foreground SERVICES, not just an
+                            // open Activity — the case that matters most: the app's screen is
+                            // closed and the phone is locked, but a foreground service is still
+                            // recording. Activity-only detection would miss that entirely.
+                            val isLikelyActive = activeNowSet.contains(pkg.packageName)
 
                             suspectApps.add(hashMapOf(
                                 "packageName"    to pkg.packageName,
@@ -787,13 +856,15 @@ class MainActivity : FlutterActivity() {
                                 "hasCameraGrant" to hasCameraGranted,
                                 "hasMicGrant"    to hasMicGranted,
                                 "isLikelyActive" to isLikelyActive,
+                                "micConfirmed"   to micConfirmed,
                             ))
                         } catch (_: Exception) {}
                     }
 
-                    // Sort: likely-active apps first
-                    suspectApps.sortByDescending {
-                        if ((it["isLikelyActive"] as? Boolean) == true) 1 else 0
+                    // Sort: a confirmed mic match first, then likely-active candidates.
+                    suspectApps.sortByDescending { app ->
+                        (if ((app["micConfirmed"] as? Boolean) == true) 2 else 0) +
+                            (if ((app["isLikelyActive"] as? Boolean) == true) 1 else 0)
                     }
                 } catch (e: Exception) {
                     Log.w(TAG, "suspectApps scan failed: ${e.message}")
@@ -815,52 +886,42 @@ class MainActivity : FlutterActivity() {
     //
     //  API 28+: AudioManager.isMicrophoneMuted() is NOT what we want.
     //  API 28+: AudioManager.getActiveRecordingConfigurations() — THIS IS IT.
-    //    Returns a list of all active AudioRecord sessions across ALL apps.
-    //    If the list is non-empty → some app has the mic open right now.
+    //    Returns a list of all active AudioRecord sessions across ALL apps, including each
+    //    session's owning UID — so unlike camera (see checkCameraInUse below), mic use can be
+    //    attributed to an EXACT app, not just narrowed to a list of candidates.
     //    This is 100% public API, works for background apps too.
     //
-    //  API < 28 fallback: /proc/asound status files.
-    private fun checkMicInUse(): Boolean {
+    //  API < 28 fallback: /proc/asound status files (no UID available there).
+    private fun checkMicInUse(): Boolean =
+        getActiveRecordingUids().isNotEmpty() || checkMicInUseViaProc()
 
-        // ── Primary: AudioManager.getActiveRecordingConfigurations() ─────
-        // Available API 24+. Returns ALL active recording sessions system-wide.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            try {
-                val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-                val configs = am.activeRecordingConfigurations
-                Log.d(TAG, "MIC_PROBE: activeRecordingConfigurations = ${configs.size} session(s)")
+    /** UIDs (excluding our own) with a live AudioRecord session right now. Empty on API < 28
+     *  or if the check fails — callers should treat that as "unknown", not "not recording". */
+    private fun getActiveRecordingUids(): Set<Int> {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return emptySet()
+        return try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            val configs = am.activeRecordingConfigurations
+            Log.d(TAG, "MIC_PROBE: activeRecordingConfigurations = ${configs.size} session(s)")
+            val myUid = android.os.Process.myUid()
+            if (Build.VERSION.SDK_INT < 28) return emptySet() // clientUid needs API 28+
 
-                // clientUid only available API 28+. Use reflection to avoid
-                // compile-time resolution error on lower API targets.
-                val myUid = android.os.Process.myUid()
-                val othersRecording = if (Build.VERSION.SDK_INT >= 28) {
-                    configs.any { cfg ->
-                        try {
-                            val uid = cfg.javaClass.getMethod("getClientUid").invoke(cfg) as? Int
-                            Log.d(TAG, "MIC_PROBE: session uid=$uid source=${cfg.clientAudioSource}")
-                            uid != null && uid != myUid
-                        } catch (_: Exception) { true }
-                    }
-                } else {
-                    configs.isNotEmpty()
-                }
-
-                if (othersRecording) {
-                    Log.d(TAG, "MIC_PROBE: ✅ ANOTHER APP is recording audio right now")
-                    return true
-                }
-                if (configs.isNotEmpty()) {
-                    Log.d(TAG, "MIC_PROBE: only our own app is recording (${configs.size} session)")
-                }
-                Log.d(TAG, "MIC_PROBE: no other app recording")
-                return false
-            } catch (e: Exception) {
-                Log.w(TAG, "MIC_PROBE: getActiveRecordingConfigurations failed: ${e.message}")
-                // Fall through to /proc fallback
-            }
+            configs.mapNotNull { cfg ->
+                try {
+                    // Reflection: getClientUid resolves fine at this API level, but keeping the
+                    // call this way avoids a hard compile-time bind for lower minSdk builds.
+                    val uid = cfg.javaClass.getMethod("getClientUid").invoke(cfg) as? Int
+                    Log.d(TAG, "MIC_PROBE: session uid=$uid source=${cfg.clientAudioSource}")
+                    uid?.takeIf { it != myUid }
+                } catch (_: Exception) { null }
+            }.toSet()
+        } catch (e: Exception) {
+            Log.w(TAG, "MIC_PROBE: getActiveRecordingConfigurations failed: ${e.message}")
+            emptySet()
         }
+    }
 
-        // ── Fallback: /proc/asound (API < 24) ────────────────────────────
+    private fun checkMicInUseViaProc(): Boolean {
         var running = false
         try {
             val asoundDir = File("/proc/asound")
@@ -945,24 +1006,6 @@ class MainActivity : FlutterActivity() {
             Log.w(TAG, "checkCameraInUse: ${e.message}")
             return false
         }
-    }
-
-    // ── Foreground check via UsageEvents ─────────────────────────────────
-    private fun isInForegroundRecently(pkgName: String, windowMs: Long): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.LOLLIPOP_MR1) return false
-        return try {
-            val usm = getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                ?: return false
-            val now    = System.currentTimeMillis()
-            val events = usm.queryEvents(now - windowMs, now) ?: return false
-            val event  = android.app.usage.UsageEvents.Event()
-            var lastType = -1
-            while (events.hasNextEvent()) {
-                events.getNextEvent(event)
-                if (event.packageName == pkgName) lastType = event.eventType
-            }
-            lastType == android.app.usage.UsageEvents.Event.MOVE_TO_FOREGROUND
-        } catch (_: Exception) { false }
     }
 
     private fun handleGetActiveSensors(result: MethodChannel.Result) {
@@ -1894,6 +1937,66 @@ class MainActivity : FlutterActivity() {
             result.success(true)
         } catch (e: Exception) {
             Log.e(TAG, "stopForegroundService failed", e)
+            result.success(false)
+        }
+    }
+
+    /** Marks (or unmarks) an app as trusted by the user — see [UserTrustStore]. */
+    private fun handleSetUserTrusted(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
+        val pkg = call.argument<String>("packageName")
+        val trusted = call.argument<Boolean>("trusted") ?: true
+        if (pkg.isNullOrBlank()) {
+            result.error("INVALID", "packageName required", null)
+            return
+        }
+        UserTrustStore.setTrusted(applicationContext, pkg, trusted)
+        result.success(null)
+    }
+
+    /**
+     * Opens the exact system "App Info" screen for one app — Force Stop, Uninstall, and
+     * Permissions are all one tap away from there. This is the realistic ceiling for what a
+     * normal, unrooted app can do about another app's process or permissions: Android
+     * deliberately gives no API for a third-party app to force-stop another app's process or
+     * silently revoke its permissions (that needs root, or Device Owner/Profile Owner
+     * provisioning — neither fits a normal consumer security app). RAT3 gets you to the exact
+     * right screen in one tap instead of leaving you to find it yourself.
+     */
+    private fun handleOpenAppSystemSettings(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
+        val pkg = call.argument<String>("packageName")
+        if (pkg.isNullOrBlank()) {
+            result.error("INVALID", "packageName required", null)
+            return
+        }
+        try {
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$pkg"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            result.success(true)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "openAppSystemSettings: no activity for $pkg")
+            result.success(false)
+        }
+    }
+
+    /** Starts the system uninstall confirmation dialog for one app. RAT3 can initiate this,
+     *  but — same platform limit as above — cannot complete it without the user's own tap on
+     *  the system dialog; no app can silently uninstall another. */
+    private fun handleRequestUninstallApp(call: io.flutter.plugin.common.MethodCall, result: MethodChannel.Result) {
+        val pkg = call.argument<String>("packageName")
+        if (pkg.isNullOrBlank()) {
+            result.error("INVALID", "packageName required", null)
+            return
+        }
+        try {
+            startActivity(
+                Intent(Intent.ACTION_DELETE, Uri.fromParts("package", pkg, null))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+            result.success(true)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "requestUninstallApp: no activity for $pkg")
             result.success(false)
         }
     }

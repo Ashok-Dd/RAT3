@@ -358,6 +358,70 @@ class PlatformChannelService {
     }
   }
 
+  // ── User-defined trusted apps ────────────────────────────────────────────
+  //
+  // Apps the user has explicitly vetted themselves ("I trust this app, stop scanning it")
+  // — separate from RAT3's own automatic Play-Store-baseline trust. Skips AppOps/blocklist
+  // work for these apps in every scan, and excludes them from Permission Tracker naming.
+
+  Future<List<String>> getUserTrustedPackages() async {
+    try {
+      final result = await _channel.invokeListMethod<dynamic>(
+        'getUserTrustedPackages',
+      );
+      return result?.whereType<String>().toList() ?? [];
+    } on PlatformException catch (e) {
+      AppLogger.error(_tag, 'getUserTrustedPackages failed: ${e.message}');
+      return [];
+    }
+  }
+
+  Future<void> setUserTrusted(String packageName, bool trusted) async {
+    try {
+      await _channel.invokeMethod<void>('setUserTrusted', {
+        'packageName': packageName,
+        'trusted': trusted,
+      });
+    } on PlatformException catch (e) {
+      AppLogger.error(_tag, 'setUserTrusted failed: ${e.message}');
+    }
+  }
+
+  // ── Mitigation actions ───────────────────────────────────────────────────
+  //
+  // Android gives no unrooted, non-device-owner app a way to force-stop another app's
+  // process or silently revoke its permissions — these open the exact system screen for it
+  // instead, one tap away, rather than leaving the user to find it themselves.
+
+  /// Opens the system "App Info" screen for [packageName] — Force Stop, Uninstall, and
+  /// Permissions are all one tap away from there.
+  Future<bool> openAppSystemSettings(String packageName) async {
+    try {
+      final result = await _channel.invokeMethod<bool>(
+        'openAppSystemSettings',
+        {'packageName': packageName},
+      );
+      return result ?? false;
+    } on PlatformException catch (e) {
+      AppLogger.error(_tag, 'openAppSystemSettings failed: ${e.message}');
+      return false;
+    }
+  }
+
+  /// Starts the system uninstall confirmation dialog for [packageName]. The user still has to
+  /// tap through it themselves — no app can silently uninstall another.
+  Future<bool> requestUninstallApp(String packageName) async {
+    try {
+      final result = await _channel.invokeMethod<bool>('requestUninstallApp', {
+        'packageName': packageName,
+      });
+      return result ?? false;
+    } on PlatformException catch (e) {
+      AppLogger.error(_tag, 'requestUninstallApp failed: ${e.message}');
+      return false;
+    }
+  }
+
   // ── Foreground Service Control ─────────────────────────────────────────
 
   /// Starts the native Android ScanForegroundService.

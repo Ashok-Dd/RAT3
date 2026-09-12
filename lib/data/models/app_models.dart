@@ -367,6 +367,7 @@ class ScannedApp {
   final String trustReason; // One-line headline explaining the verdict
   final List<String> evidence; // Full "why flagged" list, empty if trusted
   final List<String> privateDataAccess; // SMS / notifications / on-screen content
+  final bool isUserTrusted; // User explicitly marked this app trusted -- skips scanning
 
   const ScannedApp({
     required this.packageName,
@@ -390,6 +391,7 @@ class ScannedApp {
     required this.trustReason,
     required this.evidence,
     required this.privateDataAccess,
+    this.isUserTrusted = false,
   });
 
   factory ScannedApp.fromMap(Map<String, dynamic> m) {
@@ -429,6 +431,7 @@ class ScannedApp {
       privateDataAccess: List<String>.from(
         m['privateDataAccess'] as List? ?? [],
       ),
+      isUserTrusted: m['isUserTrusted'] as bool? ?? false,
     );
   }
 }

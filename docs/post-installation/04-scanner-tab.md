@@ -61,23 +61,37 @@ The Permission Tracker specifically names *other* installed apps by capability, 
 tiers of evidence:
 
 - **Actively using it right now** — the app's camera or microphone is genuinely in use at
-  this exact moment (checked via the same real-time sensor state Android itself tracks,
-  not just "does it have the permission"). This is the strongest, highest-severity signal
-  this layer raises.
+  this exact moment. For the **microphone specifically**, this is an exact match: Android
+  exposes which app owns every live recording session, so a microphone hit here is a
+  confirmed fact, not a guess. Camera has no equivalent per-app API on Android, so a camera
+  hit is the best available candidate match (permission held + genuinely active right now),
+  not a certainty. Either way, "active right now" includes an app whose foreground service is
+  still running even after you've closed its screen and locked the phone — not just an app
+  with a window open — which is what lets this catch a RAT-style pattern of recording after
+  you've stopped actively using the app. This is the strongest, highest-severity signal this
+  layer raises.
 - **Holds the permission and has heavy background time** — more than two hours of
   background activity while holding camera, microphone, or background-location access.
 
 **Both tiers only fire for an app that is *also* not an established, trusted install** —
-sideloaded, from an unknown installer, or installed within the last week. An ordinary,
-long-installed, Play-Store app doing exactly the same things (using its own camera,
-running in the background) never triggers this layer, for the same reason nothing else in
-RAT3 flags a single ordinary signal by itself.
+sideloaded, from an unknown installer, or installed within the last week — **and not an app
+you've explicitly marked trusted yourself** (see the [App Trust Engine](06-app-trust-engine.md)'s
+"Trusting an app yourself" section). An ordinary, long-installed, Play-Store app doing
+exactly the same things (using its own camera, running in the background) never triggers
+this layer, for the same reason nothing else in RAT3 flags a single ordinary signal by itself.
 
 **Example:** a photo-editing app that's been installed for six months and briefly uses the
 camera while you're using it → no alert, expected behavior. A "flashlight" app installed
 two days ago from outside the Play Store that's been running in the background for three
 hours while holding microphone access → an alert naming that specific app, because both
-"untrusted install" and "sustained background sensor access" are true at once.
+"untrusted install" and "sustained background sensor access" are true at once. The same
+app's foreground service quietly recording after you've backgrounded it and locked the
+screen → still caught, and still named, because "active right now" doesn't require its
+window to be open.
+
+Every alert this layer raises comes with an **Open App Info** action — Android gives no
+unrooted app a way to force-stop another app's process or silently revoke its permissions,
+so this takes you straight to the one screen where you can do both yourself, in one more tap.
 
 ## Scan an APK mode
 

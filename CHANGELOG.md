@@ -2,7 +2,39 @@
 
 ## Unreleased
 
+### Added
+- **User-defined trusted apps.** Every app card in Scan All Apps now has a "Trust this app"
+  action (`UserTrustStore.kt`, SharedPreferences-backed). Marking an app trusted is an
+  explicit user override — separate from the automatic Play-Store baseline — that
+  immediately sets it to TRUSTED and skips it entirely in every future scan (no AppOps
+  calls, no APK hashing, no Permission Tracker naming), so RAT3's ongoing work stays
+  focused on apps the user hasn't already vetted. A newly installed app is never on this
+  list by default, so it always goes through the full evidence ladder until the user says
+  otherwise.
+- **Mitigation actions.** Flagged apps now have "Open App Info" (Force Stop / Uninstall /
+  Permissions, one tap away) and, for Suspicious/Malicious Indicators, "Uninstall" —
+  documented honestly as the real ceiling for what an unrooted, non-Device-Owner app can do:
+  Android gives no API to force-stop another app's process or silently revoke its
+  permissions, so these open the exact system screen instead of pretending to do it directly.
+- **Exact real-time microphone attribution.** `checkMicInUse()` previously discarded the
+  UID it already had from `AudioManager.getActiveRecordingConfigurations()` and returned
+  only a yes/no boolean. It now exposes the actual recording UID(s)
+  (`getActiveRecordingUids()`), so a microphone-in-use alert can name the exact app with
+  certainty instead of listing every permission holder as an equally-likely "suspect".
+  Camera has no equivalent per-UID API on Android, so camera attribution stays a best-effort
+  candidate match — documented as such rather than implied to be as certain as mic.
+
 ### Fixed
+- **Foreground-service blind spot in "is this app active right now".** `queryForegroundNowSet`
+  (and the duplicate inline logic in `handleGetUserAppsUsingSensors`) only tracked Activity
+  `MOVE_TO_FOREGROUND`/`MOVE_TO_BACKGROUND` events. An app whose Activity is closed and whose
+  screen is locked, but whose foreground service is still recording — exactly the pattern a
+  RAT uses to keep running after you've stopped looking at it — was invisible to this check,
+  so `camActiveNow`/`micActiveNow` and the Permission Tracker's "actively using it now" tier
+  could both silently miss a real, ongoing recording. Now also tracks
+  `FOREGROUND_SERVICE_START`/`STOP` events over a 6-hour lookback (services can legitimately
+  run for hours with no new event), so a still-running foreground service counts as active
+  even with no open window.
 - **Pre-installation `DecisionEngine` could average away a strong single-layer verdict.**
   Found via a real scan: Layer 4 (the ML ensemble) scored an APK 69/100, but the four layers'
   weighted fusion (L1×0.20 + L2×0.20 + L3×0.35 + L4×0.25) produced an overall score of 24 —
