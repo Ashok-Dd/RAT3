@@ -92,8 +92,11 @@ class Layer4MlClassifier(
                             })
                         }
                     })
-                    // Layer 3 uses `hardHit` to decide escalation; mirror that here.
-                    put("hardHit", ml.verdict == "malware" && ml.malVotes >= 4)
+                    // Layer 3 uses `hardHit` to decide escalation; mirror that here. A majority
+                    // (not unanimous) malware vote is enough — requiring all 4 models to agree
+                    // let a confident 3/4 majority (e.g. 69% mean probability) get averaged down
+                    // to a SAFE verdict by the other three layers instead of escalating.
+                    put("hardHit", ml.verdict == "malware" && ml.malVotes >= 3)
                 },
             )
         } catch (e: Exception) {

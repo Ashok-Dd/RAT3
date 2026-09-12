@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+- **Pre-installation `DecisionEngine` could average away a strong single-layer verdict.**
+  Found via a real scan: Layer 4 (the ML ensemble) scored an APK 69/100, but the four layers'
+  weighted fusion (L1×0.20 + L2×0.20 + L3×0.35 + L4×0.25) produced an overall score of 24 —
+  SAFE — because Layers 1-3 saw nothing (no accessibility service, no overlay, no device admin,
+  no blocklist hit) for an app whose RAT-like behavior is a network beacon and background
+  persistence rather than accessibility abuse. Two fixes:
+  - `Layer4MlClassifier`'s `hardHit` escalation trigger no longer requires a unanimous 4/4 ML
+    vote — a confident 3/4 majority now also escalates, instead of getting averaged down by the
+    other three layers.
+  - `DecisionEngine` now has a general **single-layer-alarm floor**: any one layer scoring
+    ≥65 on its own forces the overall verdict to at least SUSPICIOUS, regardless of what the
+    weighted average says — mirroring the protection Layer 3's hard-hit already had, but no
+    longer limited to signature/blocklist hits. Covered by new `DecisionEngineTest` cases using
+    the exact 14/6/8/69 scores from the reported scan.
+
 ## 1.2.0+3
 
 A full redirection of the post-install monitor onto RAT-specific evidence, away from generic

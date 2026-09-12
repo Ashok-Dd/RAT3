@@ -53,6 +53,25 @@ class DecisionEngineTest {
     }
 
     @Test
+    fun `a single very high layer score is never averaged down to SAFE`() {
+        // This is the exact case that motivated the fix: L1=14, L2=6, L3=8, L4=69 (ML flagged
+        // it, but not unanimously) weighted to 24 — SAFE — even though Layer 4 alone screamed.
+        val r = verdict(14, 6, 8, 69)
+        assertEquals("SUSPICIOUS", r.getString("verdict"))
+        assertTrue(r.getInt("overallRiskScore") >= ScannerConfig.Decision.SINGLE_LAYER_ALARM_FLOOR)
+        assertTrue(r.getJSONObject("scoreBreakdown").getBoolean("singleLayerAlarm"))
+        assertTrue(r.getString("summary").contains("alone scored"))
+    }
+
+    @Test
+    fun `moderate single-layer scores do not trigger the alarm floor`() {
+        // Nothing here reaches SINGLE_LAYER_ALARM_THRESHOLD (65), so plain averaging applies.
+        val r = verdict(14, 6, 8, 40)
+        assertTrue(!r.getJSONObject("scoreBreakdown").getBoolean("singleLayerAlarm"))
+        assertEquals("SAFE", r.getString("verdict"))
+    }
+
+    @Test
     fun `an errored layer alone cannot force MALICIOUS`() {
         val engine = DecisionEngine(
             "/x.apk",

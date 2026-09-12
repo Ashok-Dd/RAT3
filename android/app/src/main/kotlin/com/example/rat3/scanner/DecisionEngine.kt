@@ -32,11 +32,26 @@ class DecisionEngine(
         val s4 = effectiveScore(layer4)
 
         val weighted = (s1 * Cfg.W1 + s2 * Cfg.W2 + s3 * Cfg.W3 + s4 * Cfg.W4).toInt()
+
         // Escalate on a Layer 3 signature/blocklist hit OR a confident Layer 4 ML verdict.
         val hardHit = layer3.optJSONObject("rawData")?.optBoolean("hardHit") == true ||
             layer4.optJSONObject("rawData")?.optBoolean("hardHit") == true
-        val finalScore = (if (hardHit) maxOf(weighted, Cfg.ESCALATION_MIN_SCORE) else weighted)
-            .coerceIn(0, 100)
+
+        // A single layer scoring very high on its own is real evidence that a low weighted
+        // average must never fully launder away (see SINGLE_LAYER_ALARM_THRESHOLD's doc comment).
+        val layerScores = listOf(
+            layer1.optString("layerName", "Layer 1") to s1,
+            layer2.optString("layerName", "Layer 2") to s2,
+            layer3.optString("layerName", "Layer 3") to s3,
+            layer4.optString("layerName", "Layer 4") to s4,
+        )
+        val (loudestLayer, loudestScore) = layerScores.maxByOrNull { it.second }!!
+        val singleLayerAlarm = loudestScore >= Cfg.SINGLE_LAYER_ALARM_THRESHOLD
+
+        var finalScore = weighted
+        if (hardHit) finalScore = maxOf(finalScore, Cfg.ESCALATION_MIN_SCORE)
+        if (singleLayerAlarm) finalScore = maxOf(finalScore, Cfg.SINGLE_LAYER_ALARM_FLOOR)
+        finalScore = finalScore.coerceIn(0, 100)
 
         val verdict = when {
             finalScore >= Cfg.THRESHOLD_MALICIOUS -> "MALICIOUS"
@@ -47,7 +62,7 @@ class DecisionEngine(
         return JSONObject().apply {
             put("apkPath", apkPath)
             put("verdict", verdict)
-            put("summary", buildSummary(verdict, finalScore, hardHit))
+            put("summary", buildSummary(verdict, finalScore, hardHit, singleLayerAlarm, loudestLayer, loudestScore))
             put("overallRiskScore", finalScore)
             put("layer1", layer1)
             put("layer2", layer2)
@@ -62,6 +77,9 @@ class DecisionEngine(
                 put("weighted", weighted)
                 put("final", finalScore)
                 put("escalated", hardHit)
+                put("singleLayerAlarm", singleLayerAlarm)
+                put("loudestLayer", loudestLayer)
+                put("loudestScore", loudestScore)
             })
         }
     }
@@ -81,7 +99,14 @@ class DecisionEngine(
         }
     }
 
-    private fun buildSummary(verdict: String, score: Int, hardHit: Boolean): String = buildString {
+    private fun buildSummary(
+        verdict: String,
+        score: Int,
+        hardHit: Boolean,
+        singleLayerAlarm: Boolean,
+        loudestLayer: String,
+        loudestScore: Int,
+    ): String = buildString {
         val mlVerdict = layer4.optJSONObject("rawData")?.optString("mlVerdict")
         val mlVotes = layer4.optJSONObject("rawData")?.optInt("malVotes") ?: 0
         when (verdict) {
@@ -103,6 +128,12 @@ class DecisionEngine(
                 }
                 append("Installation is strongly discouraged.")
             }
+        }
+        if (singleLayerAlarm && !hardHit) {
+            append(
+                " Note: $loudestLayer alone scored $loudestScore/100 — high enough on its own " +
+                    "that the verdict was raised even though the combined weighted average was lower.",
+            )
         }
         val errored = erroredLayers()
         if (errored.isNotEmpty()) {

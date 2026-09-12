@@ -87,5 +87,12 @@ object ScannerConfig {
 
         const val ESCALATION_MIN_SCORE = 65                    // forced when Layer 3 has a hard hit
         const val ERRORED_LAYER_MAX_CONTRIBUTION = 15          // an errored layer can't force MALICIOUS
+
+        // A single layer scoring this high is real evidence on its own — the weighted average
+        // must never fully launder it away just because the other three layers saw nothing
+        // (e.g. a novel/custom RAT with no accessibility abuse and no blocklist match, which
+        // Layers 1-3 are structurally blind to, but Layer 4's ML ensemble flagged behaviorally).
+        const val SINGLE_LAYER_ALARM_THRESHOLD = 65
+        const val SINGLE_LAYER_ALARM_FLOOR = THRESHOLD_SUSPICIOUS
     }
 }
