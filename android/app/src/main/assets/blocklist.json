@@ -1,0 +1,7 @@
+{
+  "_comment": "SHA-256 hashes (lowercase hex) of known-malicious APK files. A match forces a MALICIOUS verdict. Populate from a threat feed (e.g. MalwareBazaar, VirusShare) or your own confirmed samples. The hashes below are placeholders and match nothing real.",
+  "_format": "sha256 of the whole .apk file, as produced by `sha256sum file.apk`",
+  "hashes": [
+    "0000000000000000000000000000000000000000000000000000000000000000"
+  ]
+}

@@ -1,16 +1,280 @@
-# rat3_main
+# RAT3 — Android RAT / Spyware Defence
 
-A new Flutter project.
+RAT3 is an **Android-only** security app with two halves:
 
-## Getting Started
+1. **Pre-installation scanner** — analyse an `.apk` *before* you install it and get a
+   `SAFE` / `SUSPICIOUS` / `MALICIOUS` verdict, ending with a real on-device ML classifier.
+2. **Post-installation monitor** — a persistent background service that watches the live device
+   for remote-access-trojan / spyware behaviour (sensor abuse, data exfiltration, rogue
+   accessibility services, root, sideloaded risky apps) and raises notifications.
 
-This project is a starting point for a Flutter application.
+RAT3's job is to answer one question — *does this device show evidence of RAT compromise?* —
+not to manage permissions, clean storage, or flag an app for merely holding permissions or using
+the network. Every verdict is evidence-based and correlated: holding a permission, running in the
+background, or sending data is never enough on its own to call an app suspicious. See
+`AppTrustEngine.kt`'s doc comment for the full correlation ladder and `AppTrustEngineTest.kt` for
+the false-positive regression tests (WhatsApp/PhonePe/Google Pay/YouTube-shaped fixtures all
+resolve TRUSTED).
 
-A few resources to get you started if this is your first Flutter project:
+Everything runs **locally and offline**. Installing an APK always goes through the system
+installer dialog — RAT3 never installs anything silently.
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+> **Honesty notes**
+> - The pre-install ML layer is a real 4-model ensemble (Random Forest, Decision Tree, AdaBoost,
+>   XGBoost) exported from the trained scikit-learn / XGBoost models and evaluated in Kotlin.
+>   The 5th model (Stacking) stays server-only — its KNN base learner needs a SMOTE-resampled
+>   training set that can't be bundled compactly. See `ml/feature_schema.md`.
+> - The monitor needs `QUERY_ALL_PACKAGES` and `PACKAGE_USAGE_STATS` to see other apps. This is a
+>   **sideload / enterprise** posture, not a Play-Store-friendly one.
+> - The release build is minified (R8) and signed with a real upload keystore
+>   (`android/key.properties`, gitignored — not committed). Without that file present, a fresh
+>   checkout's release build automatically falls back to the debug key so `assembleRelease` still
+>   works locally.
+> - "Can read your notifications" (Private Data Access) is detected via
+>   `Settings.Secure.enabled_notification_listeners` — this proves an app *can* see notification
+>   previews (including Gmail/WhatsApp/bank-app previews that pass through the notification
+>   shade), not that it has read your actual Gmail account data. Android gives no API for a
+>   third-party app to inspect another app's private data directly, and RAT3 doesn't claim to.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+---
+
+## The app
+
+Five bottom-nav tabs (post-install monitor), with the pre-install scanner folded into the
+**Scanner** tab behind a *Device Monitor / Scan an APK* toggle.
+
+| Tab | What it shows |
+|-----|---------------|
+| **Dashboard** | 5-tier Device Security Status (SAFE/MONITOR/SUSPICIOUS/HIGH RISK/CRITICAL), a calm scan summary ("no strong indicators... within what RAT3 can inspect"), findings by severity, risk breakdown |
+| **Network** | Process-level connection monitor (off by default — see below): real remote IP/port/protocol/persistence per app via a local VPN. Falls back to an aggregate per-app byte-usage list (clearly labeled supplementary) when the monitor isn't enabled |
+| **Alerts** | Every finding from all layers, filterable by severity, with notifications |
+| **Scanner** | *Device Monitor*: manual scan, auto-scan interval, layer status, Sensor Scan (camera/mic + screen-recording + clipboard-access checks), **Scan All Apps** (Application Assessment: TRUSTED/NEEDS REVIEW/SUSPICIOUS/MALICIOUS INDICATORS, each with an explainable evidence list) → **Trusted Apps** (your own "I've vetted this" allowlist, skips future evaluation). *Scan an APK*: pick an APK → 4-layer pre-install analysis |
+| **Settings** | Monitoring / notification toggles, **Fix permissions** (re-run onboarding), reset risk score |
+
+A first-run **onboarding** screen requests: notifications, usage access, battery-optimisation
+exemption, and camera/mic/location. Monitoring (and the foreground service) start once onboarding
+finishes; you can skip and grant later.
+
+### Pre-installation scan — 4 layers
+
+| Layer | Checks |
+|------:|--------|
+| 1 App Safety | dangerous / suspicious permissions, exported components, target SDK, **accessibility-service abuse**, DeviceAdmin |
+| 2 Permission↔Function | permissions declared with no matching API in the DEX; `Runtime.exec` / `DexClassLoader` / `ProcessBuilder` / `ServerSocket` |
+| 3 Signatures & Reputation | substring/regex signatures, **SHA-256 file blocklist**, **signing-cert / repackaging check**, obfuscation & C2 network indicators |
+| 4 ML Malware Classifier | 241-feature TUANDROMD vector → 4-model ensemble → majority vote + mean malware probability |
+
+`DecisionEngine`: `weighted = L1·0.20 + L2·0.20 + L3·0.35 + L4·0.25`; escalate to MALICIOUS on a
+Layer-3 hard hit or a ≥ 4/4 ML "malware" vote. Thresholds: `<30` SAFE, `30–59` SUSPICIOUS, `≥60`
+MALICIOUS.
+
+### Post-installation monitor — 5 layers
+
+Runtime Monitor (CPU / memory / processes / root, 15 s) · Network Monitor (per-app TX deltas,
+C2 indicators, 20 s) · Permission Tracker (sensitive-permission background abuse, gated on the
+same "not an established Play Store app" correlation factor as Scan All Apps — see below) ·
+Alert Engine (dedup, persistence, notifications) · Risk Engine (60 s — a 65-signal
+`DeviceFeatures` snapshot scored by a weighted rule engine). A native **foreground service**
+re-runs a self-contained Kotlin scan every 5–180 min (default 10), survives app-kill
+(`START_STICKY`) and reboot (`BootReceiver`).
+
+### Application Assessment — "Scan All Apps"
+
+Per-installed-app evidence engine (`AppTrustEngine.kt`), separate from the Dashboard's device-wide
+status: a Play-Store-installed, established app with no accessibility+overlay/admin/persistence
+combination is always **TRUSTED**, regardless of permission count, network use, or background
+time — this is the fix for a real bug where WhatsApp/PhonePe/Google Pay/YouTube were flagged
+SUSPICIOUS/MALICIOUS purely for holding permissions and running in the background. Weak signals
+(sideloaded, recent install, old target SDK, `REQUEST_INSTALL_PACKAGES`/`REQUEST_DELETE_PACKAGES`
+granted, no visible launcher icon) never escalate alone; **Private Data Access** signals (can read
+SMS, can read notifications via `Settings.Secure.enabled_notification_listeners`, can read
+contacts, can read call log, accessibility can read on-screen content — named explicitly as a
+keylogging/overlay technique, matching the pre-install scanner's wording — broad storage/media
+access *combined with* a real 50MB+ sent-data floor) need one to reach NEEDS REVIEW and two for
+SUSPICIOUS on an untrusted app — shown calmly and factually, never as an "uninstall now" scare;
+strong signals (accessibility+overlay, real active camera/mic via AppOps — not just "process is
+running" — on an untrusted app, device admin) need one for SUSPICIOUS and two for MALICIOUS
+INDICATORS; a blocklist SHA-256 hash hit is the only solo path to MALICIOUS INDICATORS. An app the
+user explicitly marks trusted (`UserTrustStore.kt`, surfaced in the **Trusted Apps** screen) skips
+the whole ladder on future scans.
+
+### Real-Time Connection Monitor — Network tab
+
+Off by default (Network tab toggle — requires the system VPN consent dialog). The Network tab's
+previous data source (`/proc/net/tcp`, `MainActivity.handleGetNetworkConnections`) is **blocked by
+SELinux for third-party apps on Android 10+** and silently returns nothing on a modern device —
+there is no way to see real per-connection remote IP/port/protocol without a local VPN
+(`RatVpnService.kt` + `ConnectivityManager.getConnectionOwnerUid`, the API built for exactly this).
+
+`ConnectionMonitor` (Dart) correlates the same way the App Trust Engine does — a single ordinary
+connection is never flagged, no matter how much data it moves:
+- **NORMAL**: everything else, including a trusted app's routine HTTPS traffic.
+- **NEEDS INVESTIGATION**: exactly one signal — persistent/repeated communication with the same
+  endpoint, a known suspicious port, a known-bad IP range, the owning app already flagged by
+  the last Scan All Apps run, or a DNS-query domain that looks algorithmically generated
+  (`looksAlgorithmicallyGenerated()` — length + entropy/consonant-run heuristic, deliberately
+  conservative since random-looking CDN/cloud subdomains are a known false-positive source).
+- **SUSPICIOUS**: two or more of those signals correlated together.
+
+Both **IPv4 and IPv6** TCP/UDP are relayed and tracked (`IpPacket.kt`'s `IpHeader` abstraction,
+`parseIpv4`/`parseIpv6`, version-inferred packet building with the correct 12-byte/40-byte
+pseudo-header checksum per RFC 8200). `DnsParser.kt` extracts the queried domain from outbound
+UDP:53 queries and attaches it to that connection record — naming what *that query itself* was
+resolving, not a NAT-level correlation from a later connection's IP back to the domain that
+resolved it. **The IPv6 path is unit-tested at the packet level (`IpPacketTest.kt`, including an
+RFC 8200 checksum-substitution edge case) but has not been verified against real IPv6 traffic on
+a physical device**, unlike the IPv4 path — treat it as implemented, not as proven; see
+`docs/rat-behavior-coverage.md`'s IPv6 row.
+
+**Technical risk, stated plainly**: keeping the device's internet working while inspecting every
+connection means `TcpRelay.kt` has to terminate the client's TCP connection at the tun interface
+and re-originate it via a protected socket — real, if deliberately simplified (no retransmission/
+congestion-window logic — reasonable since the tun↔kernel path isn't a lossy link, but this is
+**not** a general-purpose VPN client). See `TcpRelay.kt`'s doc comment. `IpPacketTest.kt` verifies
+the packet-level checksums are correct (a wrong one silently drops every relayed packet with no
+visible error), but only a live device confirms the relay itself keeps browsing/calls/streaming
+working — see Verification below.
+
+---
+
+## Architecture
+
+```
+lib/
+  main.dart / _RootGate         onboarding gate → AppShell
+  core/{constants,theme,utils}   one AppTheme (neon-cyber), one risk-colour helper
+  data/
+    models/app_models.dart
+    services/  app_controller (orchestrator) · platform_channel_service ·
+               notification_service · storage_service · app_scanner_service
+  layers/  runtime_monitor · network_monitor · connection_monitor ·
+           permission_tracker · alert_engine · risk_engine · feature_engine
+  presentation/  app_shell · onboarding · dashboard · network · alerts ·
+                 scanner (segmented) · sensors · app_scan · settings · trusted_apps
+  features/apk_scan/  apk_scan_landing · scanning_screen · result_screen ·
+                      services/{apk_scanner_service,channels} · models/scan_result
+  widgets/  common_widgets (CyberCard, SectionHeader, badges, ScanPulse) · risk_ball
+
+android/app/src/main/kotlin/com/example/rat3/
+  MainActivity.kt          five channels: /security (monitor) + /scanner /file /install /progress
+  ScanForegroundService.kt · ScanAlarmReceiver.kt · BootReceiver.kt
+  scanner/  ApkContext (parse once) · Layer1-3 · Layer4MlClassifier · DecisionEngine ·
+            AppTrustEngine · UserTrustStore · DeviceAppUtils (shared with ScanForegroundService) ·
+            Signatures · Reputation · ScannerConfig · ScannerUtils ·
+            ml/{MlModels,TuandromdFeatures}
+  vpn/      RatVpnService · IpPacket (IPv4+IPv6) · TcpRelay · UdpRelay · ConnectionTracker ·
+            DnsParser (off-by-default real-time connection monitor — see above)
+android/app/src/main/assets/
+  signatures.json · blocklist.json · trusted_certs.json · ml/*.json (exported models)
+
+ml/   Flask app (app.py) + training scripts (*Model.py) + trained .pkl + TUANDROMD.csv
+      export_models_for_android.py  →  assets/ml/*.json  +  parity_samples.json
+```
+
+Platform channels (names shared in `lib/features/apk_scan/services/channels.dart` &
+`lib/data/services/platform_channel_service.dart` ↔ `MainActivity.kt`).
+
+---
+
+## Build & run
+
+Requirements: Flutter 3.38+ / Dart 3.10+, JDK 17, Android SDK (compileSdk 36), an Android device
+or emulator (minSdk 24).
+
+```bash
+flutter pub get
+flutter analyze                       # 0 issues
+flutter test                          # Dart tests
+(cd android && ./gradlew :app:testDebugUnitTest)   # Kotlin tests (incl. ML parity)
+flutter build apk --debug
+flutter build apk --release           # minified, real-signed if android/key.properties exists
+flutter build appbundle --release     # for Play Store upload
+```
+
+Bump the version before a release build: `version:` in `pubspec.yaml` is `<versionName>+<versionCode>`
+(e.g. `1.1.0+2`) — Android reads both straight from it, so there's nothing to change in Gradle.
+Always increment `versionCode` (the number after `+`); Play Store rejects a re-upload that doesn't.
+
+### On a physical phone
+
+1. Phone: **Settings → About phone →** tap *Build number* 7×, then enable **USB debugging**.
+2. Plug in, accept the prompt. `flutter devices` should list it.
+3. `flutter run` (or `flutter install`).
+4. Complete onboarding — grant notifications, **usage access** (opens a settings page),
+   battery exemption, camera/mic.
+5. The foreground-service notification appears and monitoring begins.
+
+### Regenerating the ML assets
+
+```bash
+pip install scikit-learn==1.6.1 xgboost joblib numpy pandas
+cd ml && python export_models_for_android.py
+```
+
+### The Flask research tool (optional, not part of the app)
+
+```bash
+cd ml && pip install -r requirements.txt && python app.py    # http://localhost:5000
+```
+Upload an APK to run all **five** models (Stacking included) server-side.
+
+---
+
+## Tests
+
+- `test/scan_result_parsing_test.dart` — channel JSON parsing
+- `test/widget_test.dart` — shared-widget + theme smoke test
+- `test/alert_engine_test.dart` — 3-tier alert dedup + notification suppression
+- `test/rule_based_scorer_test.dart` — the real Dashboard risk-scoring engine
+- `test/scanned_app_parsing_test.dart` — the Kotlin↔Dart Scan All Apps wire format
+- `android/.../DecisionEngineTest.kt`, `ScannerUtilsTest.kt` — verdict math, JSON schema
+- `android/.../Layer1SafetyAnalyzerTest.kt`, `Layer2PermissionMismatchTest.kt`,
+  `Layer3SignatureScannerTest.kt` — per-layer scoring rules (Layer3 via Robolectric, to read the
+  real bundled `assets/*.json`)
+- `android/.../AppTrustEngineTest.kt` — the Scan All Apps false-positive regression suite
+  (WhatsApp/PhonePe/Google Pay/YouTube-shaped fixtures) alongside the positive-detection scenarios,
+  plus the newer weak/medium-tier signals (silent install/uninstall, contacts, call log, the
+  file-exfiltration correlation, no-launcher-icon, keylogging wording)
+- `android/.../ml/MlEnsembleParityTest.kt` — Kotlin ML evaluators vs the Python models (±2.5 %)
+- `test/connection_monitor_test.dart` — the connection-correlation rules (one signal never
+  escalates past NEEDS INVESTIGATION, two reach SUSPICIOUS), plus the DGA-heuristic tests
+  (`looksAlgorithmicallyGenerated` correctly leaves google.com/wikipedia.org/whatsapp.com alone)
+- `android/.../vpn/IpPacketTest.kt` — IPv4 **and IPv6** TCP/UDP packet build+parse round-trips,
+  self-verifying checksum math for both (a wrong checksum silently drops every relayed packet
+  on-device), and a 65536-case differential search confirming the IPv6 UDP checksum is never
+  wired as the RFC-8200-invalid `0x0000`
+- `android/.../vpn/DnsParserTest.kt` — DNS query-name extraction, including the "never surface
+  binary garbage as a domain, never throw on adversarial input" defensive paths
+
+**Not yet done — needs a live device**: confirm the VPN relay keeps browsing/calls/streaming
+working while active, and that the connection list populates with real IP/port/protocol entries.
+`TcpRelay.kt` is unit-testable at the packet level but its actual relay behavior can only be
+proven on-device. **The IPv6 relay path specifically has no real-device verification at all yet**
+(IPv4 does) — it's unit-tested and independently code-reviewed, not field-proven.
+
+---
+
+## Future work
+
+- Port Stacking on-device (quantised KNN matrix) or retrain a single strong model.
+- Retrain on a fresher corpus (AndroZoo + VirusTotal); TUANDROMD is dated.
+- Real DEX parser for feature extraction (currently a string scan).
+- Live blocklist / cert-reputation feeds (`assets/blocklist.json` and `trusted_certs.json` ship
+  with placeholder hashes only — see each file's `_comment`).
+- `TcpRelay.kt` has no retransmission/congestion-window logic (see its doc comment) — fine for a
+  monitoring tool given the tun↔kernel path isn't a lossy link, but worth hardening if real-world
+  use turns up connection drops on flaky networks.
+- **Verify the IPv6 relay path on a real device.** IPv6 support (parsing, relaying, tracking,
+  RFC-8200-correct checksums) was added and is unit-tested/code-reviewed, but — unlike the IPv4
+  path, tested against real heavy browsing — nobody has yet run this build on a device with real
+  IPv6 network traffic. Packets using IPv6 extension headers are also out of scope (dropped, not
+  misparsed — see `IpPacket.kt`'s class doc comment); this covers the ordinary fixed-40-byte-header
+  case an HTTP/HTTPS/QUIC session actually produces.
+- DNS/domain visibility is per-query only — no NAT-level correlation from a resolved IP back to
+  the domain that resolved it. Would need tracking the (app, destination IP, timestamp) tuple
+  against recent DNS answers, which the parser currently skips entirely (query side only).
+- Silent-uninstall detection (`REQUEST_DELETE_PACKAGES`) covers apps removing *what they
+  installed themselves* — there's no broader Android signal for "can this app uninstall anything."
+- Play Store publish-readiness (deliberately not started): Play-compliant package-visibility
+  instead of `QUERY_ALL_PACKAGES`, Data Safety form, hosted privacy policy, real app icon,
+  Crashlytics, Play App Signing enrollment.

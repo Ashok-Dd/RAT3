@@ -1,0 +1,86 @@
+
+=============================================================
+  Android Malware Detection – AdaBoost Classifier
+=============================================================
+Dataset  : TUANDROMD.csv  (4465 samples, 241 binary features)
+Target   : Label  →  malware / goodware
+
+AdaBoost specifics:
+  • Base estimator  : DecisionTreeClassifier (depth 1–4, tuned)
+  • Boosting algo   : SAMME.R (real-valued probabilities)
+  • Fine-tuning     : RandomizedSearchCV (25 iter, 5-fold)
+  • Imbalance       : SMOTE on training set + class_weight in base
+  • Generalisation  : staged score curve (error vs n_estimators),
+                      learning curve, 5-fold CV, bias-variance gap
+=============================================================
+
+
+
+=============================================================
+  Android Malware Detection – Decision Tree Classifier
+=============================================================
+Dataset  : TUANDROMD.csv  (4465 samples, 241 binary features)
+Target   : Label  →  malware / goodware
+=============================================================
+
+
+=============================================================
+  Android Malware Detection – Random Forest Classifier
+  + Full Generalisation Monitoring During Training
+=============================================================
+Dataset  : TUANDROMD.csv  (4465 samples, 241 binary features)
+Target   : Label  →  malware / goodware
+
+Generalisation tracking includes:
+  1. OOB (Out-Of-Bag) error vs number of trees  ← live during fit
+  2. Train vs CV-score curve (learning curve)
+  3. Train-size learning curve  (bias-variance analysis)
+  4. Cross-validated metrics across 5 folds
+  5. Final held-out test evaluation
+  6. Full Generalisation Dashboard (single PNG with all plots)
+=============================================================
+
+
+
+=============================================================
+  Android Malware Detection – Stacking Ensemble Classifier
+=============================================================
+Dataset  : TUANDROMD.csv  (4465 samples, 241 binary features)
+Target   : Label  →  malware / goodware
+
+Stacking architecture:
+  ┌─────────────── Level-0 Base Learners ──────────────────┐
+  │  • Random Forest   (300 trees, tuned)                  │
+  │  • Extra Trees     (300 trees, tuned)                  │
+  │  • XGBoost         (gradient boosted trees, tuned)     │
+  │  • Logistic Reg.   (L2, scaled input)                  │
+  │  • KNN             (k=5, scaled input)                  │
+  └──────────────────────────────────────────┬─────────────┘
+                                             │ out-of-fold proba
+                                             ▼
+               Level-1 Meta-Learner: Logistic Regression
+                   (learns how to best combine base outputs)
+
+Fine-tuning:
+  • GridSearchCV over meta-learner C (regularisation)
+  • cross_val_score for base-learner selection
+  • 5-fold stratified CV throughout
+
+Generalisation tracking:
+  • 5-fold CV train vs test per base learner
+  • Learning curve on full stack
+  • Confusion matrix + ROC
+  • Generalisation dashboard
+=============================================================
+
+
+
+
+=============================================================
+  Android Malware Detection – XGBoost Classifier
+=============================================================
+Dataset  : TUANDROMD.csv  (4465 samples, 241 binary features)
+Target   : Label  →  malware / goodware
+=============================================================
+
+

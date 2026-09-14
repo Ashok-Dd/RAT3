@@ -1,160 +1,113 @@
 package com.example.rat3.scanner
 
 import org.json.JSONObject
-import java.io.File
-import java.util.zip.ZipFile
+import com.example.rat3.scanner.ScannerConfig.Layer2 as Cfg
 
 /**
- * Layer 2 — Permission–Function Mismatch Detector
+ * Layer 2 — Permission ↔ Function Mismatch.
  *
- * Cross-references declared permissions against actual API calls in DEX bytecode.
- * Flags permissions declared with no matching API (over-privilege / obfuscation).
- * Also unconditionally flags known-dangerous APIs (Runtime.exec, DexClassLoader…).
+ * Two low-to-moderate confidence checks against the (bounded) DEX text in [ApkContext]:
+ *  1. A declared permission with no matching API token in the DEX — possible over-privilege or
+ *     reflection-hidden usage. Deliberately low weight: libraries and future-use permissions
+ *     make this noisy.
+ *  2. A short list of APIs that are genuinely dangerous regardless of context
+ *     (shell execution, dynamic code loading, raw sockets).
+ *
+ * `PathClassLoader` and bare `Method.invoke` were removed from that list — they appear in
+ * essentially every modern APK (Kotlin reflection, AndroidX) and only produced false positives.
  */
-class Layer2PermissionMismatch(private val apkFile: File) {
+class Layer2PermissionMismatch(private val ctx: ApkContext) {
 
-    companion object {
-        private val PERMISSION_API_MAP: Map<String, List<String>> = mapOf(
+    private companion object {
+        val PERMISSION_API_MAP: Map<String, List<String>> = mapOf(
             "android.permission.SEND_SMS" to listOf(
-                "SmsManager;->sendTextMessage",
-                "SmsManager;->sendMultipartTextMessage"
+                "SmsManager;->sendTextMessage", "SmsManager;->sendMultipartTextMessage",
             ),
             "android.permission.RECORD_AUDIO" to listOf(
-                "MediaRecorder;->setAudioSource",
-                "AudioRecord;-><init>"
+                "MediaRecorder;->setAudioSource", "AudioRecord;-><init>",
             ),
             "android.permission.CAMERA" to listOf(
-                "CameraManager;->openCamera",
-                "Camera;->open",
-                "CameraDevice"
+                "CameraManager;->openCamera", "Camera;->open", "Landroid/hardware/camera2/",
             ),
             "android.permission.READ_CONTACTS" to listOf(
-                "ContactsContract",
-                "CommonDataKinds"
+                "ContactsContract", "content://com.android.contacts",
             ),
             "android.permission.ACCESS_FINE_LOCATION" to listOf(
                 "LocationManager;->requestLocationUpdates",
                 "LocationManager;->getLastKnownLocation",
                 "FusedLocationProviderClient",
-                "LocationRequest"
-            ),
-            "android.permission.READ_EXTERNAL_STORAGE" to listOf(
-                "Environment;->getExternalStorageDirectory",
-                "getExternalFilesDir",
-                "MediaStore"
             ),
             "android.permission.READ_PHONE_STATE" to listOf(
-                "TelephonyManager;->getDeviceId",
-                "TelephonyManager;->getSubscriberId",
-                "TelephonyManager;->getImei",
-                "TelephonyManager;->getLine1Number"
-            ),
-            "android.permission.RECEIVE_BOOT_COMPLETED" to listOf(
-                "BOOT_COMPLETED",
-                "QUICKBOOT_POWERON"
+                "TelephonyManager;->getDeviceId", "TelephonyManager;->getSubscriberId",
+                "TelephonyManager;->getImei", "TelephonyManager;->getLine1Number",
             ),
             "android.permission.READ_SMS" to listOf(
-                "Telephony\$Sms",
-                "content://sms"
-            )
+                "content://sms", "Telephony\$Sms",
+            ),
+            "android.permission.READ_CALL_LOG" to listOf(
+                "content://call_log", "CallLog\$Calls",
+            ),
         )
 
-        private val ALWAYS_SUSPICIOUS_APIS: List<Pair<String, String>> = listOf(
-            "Runtime;->exec("    to "Runtime.exec() — shell command execution",
-            "DexClassLoader"     to "DexClassLoader — dynamic code loading (possible payload injection)",
-            "PathClassLoader"    to "PathClassLoader — dynamic class loading",
-            "Method;->invoke("  to "Reflection (Method.invoke) — may hide true functionality",
-            "ServerSocket"       to "ServerSocket — opens listening port (possible backdoor)",
-            "ProcessBuilder"     to "ProcessBuilder — process execution"
+        val DANGEROUS_APIS: List<Triple<String, String, Int>> = listOf(
+            Triple("Runtime;->exec(", "Runtime.exec() — shell command execution",
+                Cfg.API_RUNTIME_EXEC_POINTS),
+            Triple("Ldalvik/system/DexClassLoader", "DexClassLoader — loads code at runtime (payload staging)",
+                Cfg.API_DEX_CLASSLOADER_POINTS),
+            Triple("Ljava/lang/ProcessBuilder", "ProcessBuilder — spawns external processes",
+                Cfg.API_PROCESS_BUILDER_POINTS),
+            Triple("Ljava/net/ServerSocket", "ServerSocket — opens a listening port (possible backdoor)",
+                Cfg.API_SERVER_SOCKET_POINTS),
         )
     }
 
     fun analyze(): JSONObject {
         val findings = mutableListOf<JSONObject>()
-        var riskScore = 0
+        var score = 0
+        var mismatches = 0
 
-        return try {
-            val dexContent  = extractDexContent()
-            val permissions = extractPermissions()
-            var mismatchCount = 0
-
-            for ((permission, apis) in PERMISSION_API_MAP) {
-                if (permission !in permissions) continue
-                val apiUsed = apis.any { token -> dexContent.contains(token) }
-                if (!apiUsed) {
-                    mismatchCount++
-                    riskScore += 10
-                    val shortName = permission.removePrefix("android.permission.")
-                    findings += finding(
-                        "Mismatch: $shortName declared but no matching API found in DEX. " +
-                        "Possible over-privilege or obfuscated usage.",
-                        isWarning = true,
-                        category = "permission_mismatch"
-                    )
-                }
-            }
-
-            for ((token, description) in ALWAYS_SUSPICIOUS_APIS) {
-                if (dexContent.contains(token)) {
-                    riskScore += 12
-                    findings += finding(
-                        "Suspicious API: $description",
-                        isWarning = true,
-                        category = "suspicious_api"
-                    )
-                }
-            }
-
-            if (findings.none { it.optBoolean("isWarning") }) {
+        for ((permission, apis) in PERMISSION_API_MAP) {
+            if (permission !in ctx.permissions) continue
+            if (apis.none { ctx.dexText.contains(it) }) {
+                mismatches++
+                score += Cfg.MISMATCH_POINTS
                 findings += finding(
-                    "Permission–API mapping looks consistent. No mismatches detected. ✓",
-                    isWarning = false
+                    "${KnownPermissions.shortName(permission)} is declared but no matching API " +
+                        "was found in the code (low confidence — could be reflection or unused).",
+                    isWarning = true,
+                    category = "permission_mismatch",
                 )
             }
-
-            buildLayerJson(
-                layerName = "Permission–Function Mismatch",
-                riskScore = riskScore,
-                findings = findings,
-                rawData = JSONObject().apply {
-                    put("mismatchCount", mismatchCount)
-                    put("permissionsChecked", permissions.size)
-                    put("dexSizeKB", (dexContent.length / 1024).coerceAtLeast(0))
-                }
-            )
-        } catch (e: Exception) {
-            buildLayerJson(
-                layerName = "Permission–Function Mismatch",
-                riskScore = 25,
-                findings = listOf(finding("DEX analysis error: ${e.message}", isWarning = true)),
-                rawData = JSONObject()
-            )
         }
-    }
+        score = minOf(score, Cfg.MISMATCH_CAP)
 
-    private fun extractDexContent(): String {
-        val sb = StringBuilder()
-        ZipFile(apkFile).use { zip ->
-            zip.entries().asSequence()
-                .filter { entry -> entry.name.matches(Regex("""classes\d*\.dex""")) }
-                .forEach { entry ->
-                    zip.getInputStream(entry).use { stream ->
-                        sb.append(stream.readBytes().toString(Charsets.ISO_8859_1))
-                    }
-                }
-        }
-        return sb.toString()
-    }
-
-    private fun extractPermissions(): Set<String> {
-        val found = mutableSetOf<String>()
-        ZipFile(apkFile).use { zip ->
-            val entry = zip.getEntry("AndroidManifest.xml") ?: return found
-            val raw   = zip.getInputStream(entry).readBytes().toString(Charsets.ISO_8859_1)
-            for (perm in Layer1SafetyAnalyzer.DANGEROUS_PERMISSIONS + Layer1SafetyAnalyzer.SUSPICIOUS_PERMISSIONS) {
-                if (raw.contains(perm.takeLast(22))) found += perm
+        for ((token, description, points) in DANGEROUS_APIS) {
+            if (ctx.dexText.contains(token)) {
+                score += points
+                findings += finding("Dangerous API: $description", isWarning = true, category = "dangerous_api")
             }
         }
-        return found
+
+        if (ctx.dexTruncated) {
+            findings += finding(
+                "Code was large and only partially scanned — some APIs may be missed.",
+                isWarning = false,
+                category = "info",
+            )
+        }
+        if (findings.none { it.optBoolean("isWarning") }) {
+            findings += finding("Permissions and code usage look consistent.", isWarning = false)
+        }
+
+        return buildLayerJson(
+            layerName = "Permission–Function Mismatch",
+            riskScore = score,
+            findings = findings,
+            rawData = JSONObject().apply {
+                put("mismatchCount", mismatches)
+                put("permissionsChecked", ctx.permissions.size)
+                put("dexTruncated", ctx.dexTruncated)
+            },
+        )
     }
 }

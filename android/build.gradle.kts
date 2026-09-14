@@ -5,18 +5,14 @@ allprojects {
     }
 }
 
+// Flutter's tooling expects build output under <project>/build.
 val newBuildDir: Directory =
-    rootProject.layout.buildDirectory
-        .dir("../../build")
-        .get()
+    rootProject.layout.buildDirectory.dir("../../build").get()
 rootProject.layout.buildDirectory.value(newBuildDir)
 
 subprojects {
-    val newSubprojectBuildDir: Directory = newBuildDir.dir(project.name)
-    project.layout.buildDirectory.value(newSubprojectBuildDir)
+    project.layout.buildDirectory.value(newBuildDir.dir(project.name))
 }
-
-// Removed evaluationDependsOn(":app") — causes config issues with resource shrinking
 
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)

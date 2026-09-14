@@ -1,0 +1,82 @@
+[
+  {
+    "id": "RAT3-001",
+    "name": "AndroRAT marker",
+    "family": "AndroRAT",
+    "pattern": "AndroRAT",
+    "isRegex": false,
+    "riskWeight": 50
+  },
+  {
+    "id": "RAT3-002",
+    "name": "SpyNote package",
+    "family": "SpyNote",
+    "pattern": "com.spynote",
+    "isRegex": false,
+    "riskWeight": 55
+  },
+  {
+    "id": "RAT3-003",
+    "name": "Crypto miner stratum pool",
+    "family": "CryptoMiner",
+    "pattern": "stratum+tcp://",
+    "isRegex": false,
+    "riskWeight": 40
+  },
+  {
+    "id": "RAT3-004",
+    "name": "Embedded su binary path",
+    "family": "RootExploit",
+    "pattern": "/system/xbin/su",
+    "isRegex": false,
+    "riskWeight": 45
+  },
+  {
+    "id": "RAT3-005",
+    "name": "SIM-country overlay check",
+    "family": "BankBot",
+    "pattern": "getSimCountryIso",
+    "isRegex": false,
+    "riskWeight": 20
+  },
+  {
+    "id": "RAT3-006",
+    "name": "SMS-stealer log reader",
+    "family": "SMSStealer",
+    "pattern": "content://sms",
+    "isRegex": false,
+    "riskWeight": 25
+  },
+  {
+    "id": "RAT3-007",
+    "name": "Ransomware locked extension",
+    "family": "Ransomware",
+    "pattern": "\\.locked[\"'<]",
+    "isRegex": true,
+    "riskWeight": 55
+  },
+  {
+    "id": "RAT3-008",
+    "name": "Fake Google Play SDK",
+    "family": "Adware",
+    "pattern": "com.google.play.fakesdk",
+    "isRegex": false,
+    "riskWeight": 45
+  },
+  {
+    "id": "RAT3-009",
+    "name": "AndroRAT config marker",
+    "family": "AndroRAT",
+    "pattern": "androrat.properties",
+    "isRegex": false,
+    "riskWeight": 55
+  },
+  {
+    "id": "RAT3-010",
+    "name": "MobiHok / SpyMax marker",
+    "family": "SpyMax",
+    "pattern": "spymax",
+    "isRegex": false,
+    "riskWeight": 50
+  }
+]

@@ -1,111 +1,143 @@
 package com.example.rat3.scanner
 
 import org.json.JSONObject
+import com.example.rat3.scanner.ScannerConfig.Decision as Cfg
 
 /**
- * DecisionEngine
+ * Fuses the four layer results into one verdict.
  *
- * Fuses the four layer outputs into a single final verdict.
+ *   weighted = L1·0.20 + L2·0.20 + L3·0.35 + L4·0.25
  *
- * Algorithm:
- *   weighted = L1×0.20 + L2×0.20 + L3×0.35 + L4×0.25
+ * A layer that failed to analyse (`rawData.analysisError == true`) has its contribution capped
+ * at [Cfg.ERRORED_LAYER_MAX_CONTRIBUTION] so a parse failure alone can never produce a MALICIOUS
+ * verdict. When Layer 3 reports a hard hit (blocklist / signature / repackaging) the score is
+ * escalated to at least [Cfg.ESCALATION_MIN_SCORE].
  *
- *   Override (escalation) rules — applied AFTER weighting:
- *     L3 ≥ 70  →  final score forced to ≥ 65   (signature hit = almost certainly malicious)
- *     L4 ≥ 80  →  final score forced to ≥ 65   (ML very confident)
- *
- *   Thresholds:
- *     final < 30  → SAFE
- *     30 ≤ final < 60 → SUSPICIOUS
- *     final ≥ 60  → MALICIOUS
- *
- * Returns a complete ScanResult JSON object (schema matches Dart ScanResult model).
+ *   < 30            → SAFE
+ *   30 .. 59        → SUSPICIOUS
+ *   ≥ 60            → MALICIOUS
  */
 class DecisionEngine(
     private val apkPath: String,
-    private val layer1:  JSONObject,
-    private val layer2:  JSONObject,
-    private val layer3:  JSONObject,
-    private val layer4:  JSONObject,
+    private val layer1: JSONObject,
+    private val layer2: JSONObject,
+    private val layer3: JSONObject,
+    private val layer4: JSONObject,
 ) {
 
-    companion object {
-        private const val W1 = 0.20
-        private const val W2 = 0.20
-        private const val W3 = 0.35
-        private const val W4 = 0.25
-
-        private const val THRESHOLD_MALICIOUS  = 60
-        private const val THRESHOLD_SUSPICIOUS = 30
-        private const val OVERRIDE_MIN_SCORE   = 65
-    }
-
     fun computeVerdict(): JSONObject {
-        val s1 = layer1.optInt("riskScore", 0)
-        val s2 = layer2.optInt("riskScore", 0)
-        val s3 = layer3.optInt("riskScore", 0)
-        val s4 = layer4.optInt("riskScore", 0)
+        val s1 = effectiveScore(layer1)
+        val s2 = effectiveScore(layer2)
+        val s3 = effectiveScore(layer3)
+        val s4 = effectiveScore(layer4)
 
-        val weighted  = (s1 * W1 + s2 * W2 + s3 * W3 + s4 * W4).toInt()
-        val escalate  = s3 >= 70 || s4 >= 80
-        val finalScore= if (escalate) maxOf(weighted, OVERRIDE_MIN_SCORE) else weighted
+        val weighted = (s1 * Cfg.W1 + s2 * Cfg.W2 + s3 * Cfg.W3 + s4 * Cfg.W4).toInt()
+
+        // Escalate on a Layer 3 signature/blocklist hit OR a confident Layer 4 ML verdict.
+        val hardHit = layer3.optJSONObject("rawData")?.optBoolean("hardHit") == true ||
+            layer4.optJSONObject("rawData")?.optBoolean("hardHit") == true
+
+        // A single layer scoring very high on its own is real evidence that a low weighted
+        // average must never fully launder away (see SINGLE_LAYER_ALARM_THRESHOLD's doc comment).
+        val layerScores = listOf(
+            layer1.optString("layerName", "Layer 1") to s1,
+            layer2.optString("layerName", "Layer 2") to s2,
+            layer3.optString("layerName", "Layer 3") to s3,
+            layer4.optString("layerName", "Layer 4") to s4,
+        )
+        val (loudestLayer, loudestScore) = layerScores.maxByOrNull { it.second }!!
+        val singleLayerAlarm = loudestScore >= Cfg.SINGLE_LAYER_ALARM_THRESHOLD
+
+        var finalScore = weighted
+        if (hardHit) finalScore = maxOf(finalScore, Cfg.ESCALATION_MIN_SCORE)
+        if (singleLayerAlarm) finalScore = maxOf(finalScore, Cfg.SINGLE_LAYER_ALARM_FLOOR)
+        finalScore = finalScore.coerceIn(0, 100)
 
         val verdict = when {
-            finalScore >= THRESHOLD_MALICIOUS  -> "MALICIOUS"
-            finalScore >= THRESHOLD_SUSPICIOUS -> "SUSPICIOUS"
-            else                               -> "SAFE"
+            finalScore >= Cfg.THRESHOLD_MALICIOUS -> "MALICIOUS"
+            finalScore >= Cfg.THRESHOLD_SUSPICIOUS -> "SUSPICIOUS"
+            else -> "SAFE"
         }
 
         return JSONObject().apply {
-            put("apkPath",          apkPath)
-            put("verdict",          verdict)
-            put("summary",          buildSummary(verdict, finalScore, s1, s2, s3, s4))
-            put("overallRiskScore", finalScore.coerceIn(0, 100))
-            put("layer1",           layer1)
-            put("layer2",           layer2)
-            put("layer3",           layer3)
-            put("layer4",           layer4)
-            put("analysisTimestamp",System.currentTimeMillis())
+            put("apkPath", apkPath)
+            put("verdict", verdict)
+            put("summary", buildSummary(verdict, finalScore, hardHit, singleLayerAlarm, loudestLayer, loudestScore))
+            put("overallRiskScore", finalScore)
+            put("layer1", layer1)
+            put("layer2", layer2)
+            put("layer3", layer3)
+            put("layer4", layer4)
+            put("analysisTimestamp", System.currentTimeMillis())
             put("scoreBreakdown", JSONObject().apply {
-                put("layer1",   s1)
-                put("layer2",   s2)
-                put("layer3",   s3)
-                put("layer4",   s4)
+                put("layer1", s1)
+                put("layer2", s2)
+                put("layer3", s3)
+                put("layer4", s4)
                 put("weighted", weighted)
-                put("final",    finalScore)
-                put("escalated",escalate)
+                put("final", finalScore)
+                put("escalated", hardHit)
+                put("singleLayerAlarm", singleLayerAlarm)
+                put("loudestLayer", loudestLayer)
+                put("loudestScore", loudestScore)
             })
         }
     }
 
-    // ─── Human-readable summary ────────────────────────────────────────
+    /** Raw layer score, capped if the layer reported an analysis error. */
+    private fun effectiveScore(layer: JSONObject): Int {
+        val raw = layer.optInt("riskScore", 0)
+        val errored = layer.optJSONObject("rawData")?.optBoolean("analysisError") == true
+        return if (errored) minOf(raw, Cfg.ERRORED_LAYER_MAX_CONTRIBUTION) else raw
+    }
+
+    private fun erroredLayers(): List<String> = buildList {
+        listOf(layer1, layer2, layer3, layer4).forEach { l ->
+            if (l.optJSONObject("rawData")?.optBoolean("analysisError") == true) {
+                add(l.optString("layerName", "a layer"))
+            }
+        }
+    }
 
     private fun buildSummary(
         verdict: String,
         score: Int,
-        s1: Int, s2: Int, s3: Int, s4: Int,
+        hardHit: Boolean,
+        singleLayerAlarm: Boolean,
+        loudestLayer: String,
+        loudestScore: Int,
     ): String = buildString {
+        val mlVerdict = layer4.optJSONObject("rawData")?.optString("mlVerdict")
+        val mlVotes = layer4.optJSONObject("rawData")?.optInt("malVotes") ?: 0
         when (verdict) {
-            "SAFE" -> {
-                append("This APK appears safe (risk score: $score/100). ")
-                append("No significant threats detected across all 4 analysis layers.")
-            }
-            "SUSPICIOUS" -> {
-                append("This APK has suspicious characteristics (risk score: $score/100). ")
-                if (s1 >= THRESHOLD_SUSPICIOUS) append("Manifest issues detected. ")
-                if (s2 >= THRESHOLD_SUSPICIOUS) append("Permission mismatches found. ")
-                if (s3 >= THRESHOLD_SUSPICIOUS) append("Partial signature matches. ")
-                if (s4 >= THRESHOLD_SUSPICIOUS) append("ML model flagged anomalies. ")
-                append("Review the findings carefully before installing.")
-            }
+            "SAFE" -> append(
+                "This APK appears safe (risk score $score/100). " +
+                    "No significant threats detected across the four analysis layers.",
+            )
+            "SUSPICIOUS" -> append(
+                "This APK has some suspicious characteristics (risk score $score/100). " +
+                    "Review the layer findings carefully before installing.",
+            )
             "MALICIOUS" -> {
-                append("⚠ HIGH RISK: This APK is likely malicious (risk score: $score/100). ")
-                if (s3 >= THRESHOLD_MALICIOUS) append("Known malware signatures matched. ")
-                if (s4 >= THRESHOLD_MALICIOUS) append("ML model detected malware patterns. ")
-                if (s1 >= THRESHOLD_MALICIOUS) append("Critical manifest anomalies found. ")
+                append("HIGH RISK: this APK is likely malicious (risk score $score/100). ")
+                if (layer3.optJSONObject("rawData")?.optBoolean("hardHit") == true) {
+                    append("A known malware signature or reputation hit was found. ")
+                }
+                if (mlVerdict == "malware") {
+                    append("The ML ensemble classified it as malware ($mlVotes/4 models agree). ")
+                }
                 append("Installation is strongly discouraged.")
             }
-            else -> append("Analysis complete. Risk score: $score/100.")
+        }
+        if (singleLayerAlarm && !hardHit) {
+            append(
+                " Note: $loudestLayer alone scored $loudestScore/100 — high enough on its own " +
+                    "that the verdict was raised even though the combined weighted average was lower.",
+            )
+        }
+        val errored = erroredLayers()
+        if (errored.isNotEmpty()) {
+            append(" Note: ${errored.joinToString()} could not complete analysis, so this verdict is based on partial data.")
         }
     }
 }

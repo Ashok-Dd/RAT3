@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Models – APK Malware Detector</title>
+<style>
+  :root {
+    --bg:#0d1117;--surface:#161b22;--border:#30363d;
+    --accent:#58a6ff;--safe:#3fb950;--warn:#d29922;--danger:#f85149;
+    --text:#e6edf3;--muted:#8b949e;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh;}
+  nav{background:var(--surface);border-bottom:1px solid var(--border);
+    padding:14px 32px;display:flex;align-items:center;gap:24px;}
+  nav .logo{font-size:1.1rem;font-weight:700;color:var(--accent);display:flex;align-items:center;gap:8px;}
+  nav a{color:var(--muted);text-decoration:none;font-size:.9rem;}
+  nav a:hover{color:var(--text);}
+  nav .new-btn{margin-left:auto;background:var(--accent);color:#000;
+    padding:7px 16px;border-radius:6px;font-weight:600;font-size:.85rem;text-decoration:none;}
+  .container{max-width:900px;margin:0 auto;padding:40px 24px;}
+  h1{font-size:1.7rem;margin-bottom:8px;}
+  .subtitle{color:var(--muted);margin-bottom:32px;font-size:.95rem;}
+  .model-card{background:var(--surface);border:1px solid var(--border);
+    border-radius:12px;padding:24px;margin-bottom:20px;}
+  .model-card .header{display:flex;align-items:center;gap:14px;margin-bottom:18px;}
+  .model-card .icon{font-size:2rem;}
+  .model-card .title{font-size:1.1rem;font-weight:700;}
+  .model-card .type-badge{background:rgba(88,166,255,.12);color:var(--accent);
+    padding:3px 10px;border-radius:20px;font-size:.78rem;margin-top:4px;display:inline-block;}
+  .model-card .oob-badge{background:rgba(63,185,80,.12);color:var(--safe);
+    padding:3px 10px;border-radius:20px;font-size:.78rem;margin-left:6px;display:inline-block;}
+  .params-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;}
+  .param-box{background:var(--bg);border:1px solid var(--border);
+    border-radius:8px;padding:12px 14px;}
+  .param-box .key{font-size:.78rem;color:var(--muted);margin-bottom:4px;}
+  .param-box .value{font-size:.95rem;font-weight:600;font-family:monospace;}
+  .not-loaded{background:rgba(248,81,73,.06);border:1px dashed rgba(248,81,73,.3);
+    border-radius:12px;padding:24px;color:var(--muted);text-align:center;margin-bottom:20px;}
+  .not-loaded code{color:var(--accent);background:var(--bg);
+    padding:2px 8px;border-radius:4px;font-size:.85rem;}
+  .feat-info{background:var(--bg);border:1px solid var(--border);
+    border-radius:10px;padding:20px;margin-bottom:32px;}
+  .feat-info h3{margin-bottom:12px;font-size:1rem;}
+  .feat-row{display:flex;justify-content:space-between;padding:6px 0;
+    border-bottom:1px solid var(--border);font-size:.88rem;}
+  .feat-row:last-child{border-bottom:none;}
+  .feat-row .lbl{color:var(--muted);}
+  footer{text-align:center;padding:32px;color:var(--muted);font-size:.82rem;
+         border-top:1px solid var(--border);margin-top:40px;}
+</style>
+</head>
+<body>
+<nav>
+  <div class="logo"><span>🛡️</span> APK Malware Detector</div>
+  <a href="/">Analyze</a>
+  <a href="/test">Manual Tester</a>
+  <a href="/models">Models</a>
+  <a href="/" class="new-btn">+ New Analysis</a>
+</nav>
+
+<div class="container">
+  <h1>🤖 Loaded Models</h1>
+  <p class="subtitle">These models were trained on the TUANDROMD dataset and are used for ensemble prediction.</p>
+
+  <!-- Feature info -->
+  <div class="feat-info">
+    <h3>📊 Feature Space</h3>
+    <div class="feat-row"><span class="lbl">Total features</span><span>{{ feature_count }}</span></div>
+    <div class="feat-row"><span class="lbl">Permissions (Android manifest)</span><span>212</span></div>
+    <div class="feat-row"><span class="lbl">Dangerous API calls (DEX bytecode)</span><span>28</span></div>
+    <div class="feat-row"><span class="lbl">Activity flag</span><span>1</span></div>
+    <div class="feat-row"><span class="lbl">Target classes</span><span>malware / goodware</span></div>
+    <div class="feat-row"><span class="lbl">Training set</span><span>TUANDROMD.csv (4 464 samples)</span></div>
+  </div>
+
+  {% if models_info %}
+    {% for name, info in models_info.items() %}
+    <div class="model-card">
+      <div class="header">
+        <div class="icon">
+          {% if 'Forest' in name %}&#x1F332;
+          {% elif 'Tree' in name %}&#x1F33F;
+          {% elif 'XGB' in name %}&#x26A1;
+          {% elif 'Ada' in name %}&#x1F4C8;
+          {% elif 'Stack' in name %}&#x1F9F1;
+          {% else %}&#x1F9E0;{% endif %}
+        </div>
+        <div>
+          <div class="title">{{ name }}</div>
+          <span class="type-badge">{{ info.type }}</span>
+          {% if info.oob_score is defined %}
+          <span class="oob-badge">OOB {{ "%.4f"|format(info.oob_score) }}</span>
+          {% endif %}
+        </div>
+      </div>
+      <div class="params-grid">
+        {% for k, v in info.params.items() %}
+        <div class="param-box">
+          <div class="key">{{ k }}</div>
+          <div class="value">{{ v }}</div>
+        </div>
+        {% endfor %}
+        <div class="param-box">
+          <div class="key">classes</div>
+          <div class="value">{{ info.classes | join(', ') }}</div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="not-loaded">
+    <p style="font-size:1.1rem;margin-bottom:8px;">⚠️ No models are currently loaded.</p>
+    <p>Run the training scripts first, then copy the output folders to <code>models/</code>:</p>
+    <br>
+    <code>python train_random_forest.py</code><br><br>
+    <code>python train_decision_tree.py</code><br><br>
+    <code>python train_xgboost.py</code>
+  </div>
+  {% endif %}
+
+  <!-- How to add models -->
+  <div class="feat-info" style="margin-top:16px">
+    <h3>📂 Model Directory Layout</h3>
+    <div class="feat-row"><span class="lbl">Random Forest</span><span style="font-family:monospace;font-size:.82rem">models/random_forest/rf_model.pkl</span></div>
+    <div class="feat-row"><span class="lbl">Decision Tree</span><span style="font-family:monospace;font-size:.82rem">models/decision_tree/dt_model.pkl</span></div>
+    <div class="feat-row"><span class="lbl">XGBoost</span><span style="font-family:monospace;font-size:.82rem">models/xgboost/xgb_model.pkl</span></div>
+    <div class="feat-row"><span class="lbl">Feature list</span><span style="font-family:monospace;font-size:.82rem">models/feature_list.json</span></div>
+  </div>
+</div>
+
+<footer>TUANDROMD Dataset &nbsp;|&nbsp; Feature-based Android Malware Detection</footer>
+</body>
+</html>

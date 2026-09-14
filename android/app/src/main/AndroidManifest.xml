@@ -3,11 +3,46 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
-    <!-- ── Permissions ─────────────────────────────────────────────── -->
+    <!-- ── Pre-installation APK scanner ─────────────────────────────────── -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
-        android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+    <!-- ── Post-installation device monitor ─────────────────────────────── -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- RAT3 never actually records audio itself; this is held purely because Android's
+         AudioManager.getActiveRecordingConfigurations() anonymizes every other app's client
+         UID (returning it as the caller's own UID instead of the real one) unless the CALLER
+         holds RECORD_AUDIO. Without this, "which app is using the microphone right now" is
+         structurally impossible to detect, not just imprecise. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Device-wide monitoring needs to enumerate other apps. Not Play-Store friendly;
+         this build targets sideload / enterprise use. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <!-- Optional, off-by-default real-time connection monitor (Settings toggle). Uses the
+         FOREGROUND_SERVICE_SPECIAL_USE permission already declared above, plus the user's
+         explicit system VPN consent (VpnService.prepare()); see RatVpnService.kt. No extra
+         uses-permission needed here: BIND_VPN_SERVICE guards the service element itself, held
+         by the system when it binds, not something this app declares for itself. -->
+
+    <!-- Lets the ACTION_VIEW install intent resolve on Android 11+. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/vnd.android.package-archive" />
+        </intent>
+    </queries>
 
     <application
         android:name="${applicationName}"
@@ -21,12 +56,10 @@
         android:usesCleartextTraffic="false"
         tools:targetApi="31">
 
-        <!-- ── Flutter v2 embedding metadata (REQUIRED — fixes the error) ── -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
 
-        <!-- ── Main Activity ───────────────────────────────────────── -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -36,18 +69,16 @@
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:theme="@style/LaunchTheme">
 
-            <!-- Normal theme after Flutter renders first frame -->
             <meta-data
                 android:name="io.flutter.embedding.android.NormalTheme"
                 android:resource="@style/NormalTheme" />
 
-            <!-- Launcher intent -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- "Open with RAT3" — appears in file manager open-with dialog -->
+            <!-- "Scan with RAT3" in the file-manager open-with dialog -->
             <intent-filter android:label="@string/scan_with_rat3">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
@@ -56,7 +87,55 @@
 
         </activity>
 
-        <!-- ── FileProvider (required for system installer on API 24+) ── -->
+        <!-- Persistent background monitor -->
+        <service
+            android:name=".ScanForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="continuous on-device RAT / spyware behaviour monitoring" />
+        </service>
+
+        <!-- Optional, off-by-default real-time connection monitor. Requires the user's
+             explicit system VPN consent dialog (VpnService.prepare()) before it can start. -->
+        <service
+            android:name=".vpn.RatVpnService"
+            android:enabled="true"
+            android:exported="false"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="real-time network connection monitoring (user-enabled VPN)" />
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
+
+        <receiver
+            android:name=".ScanAlarmReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.example.rat3.RUN_SCAN" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".BootReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Shares the copied APK from cache/apk_scan/ with the system installer only. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
