@@ -56,16 +56,76 @@ silently. A representative sample:
 | Network | A malicious connection was detected | Critical |
 | Network | More than 50 MB sent in the background | High |
 | Network | Many tiny, frequent packets (a beacon/heartbeat pattern) | High |
-| App | 3 or more apps installed outside the Play Store | Critical |
+| App | 3 or more apps already flagged NEEDS REVIEW or worse by the App Trust Engine | Critical |
 | App | Any app is using an Accessibility Service | Critical |
 | System | Device is rooted | Critical |
-| System | USB debugging is enabled | High |
+| System | Rooted **and** USB debugging is enabled | Medium |
 | Permission | Device Administrator rights are active on some app | Critical |
+| System | Play Protect app verification is turned off | Low — a weak signal alone, same philosophy as unknown sources; also removes a real layer of protection this device would otherwise have |
 | Aggregated | Strong correlation between sensor activity and network uploads | Critical — "a primary indicator of a surveillance RAT" |
 
 Rules within a category are additive and capped at 100 for that category, so several
 moderate findings in one category can add up to a high sub-score even though no single
 one of them would.
+
+## Rules that were deliberately removed or changed, and why
+
+Four things in this engine used to score genuine bugs or common, legitimate device
+configurations as if they were meaningful risk evidence — some the same category of mistake
+the [App Trust Engine](06-app-trust-engine.md) was rewritten to avoid on the per-app side,
+just showing up here on the device-wide side instead; one a real data bug:
+
+- **"Background data sent" used to be a 30-day, whole-device total, not a live reading.**
+  The underlying Android API used for this reports each app's data usage over the last 30
+  days — genuinely useful for "how much has this app used this month," but every scan was
+  feeding that same 30-day total straight into rules meant to catch a live burst of new
+  activity. On any actively-used phone, 30 days of total traffic is essentially always past
+  the 50MB threshold, so this rule (and the "sent without interaction" rule, and the
+  mic/camera-plus-network correlation checks, which all reused the same number) fired on
+  nearly every scan regardless of what the device was actually doing at that moment. The
+  score now tracks the previous reading and scores only the change since the last scan —
+  the very first scan after installing this fix, or after a device reboot, correctly reads
+  0 rather than a spurious jump, since there's no prior reading yet to compare against.
+
+- **Sideloaded-app count, by itself, is no longer scored.** The original rule scored "3 or
+  more apps installed outside Play Store" as Critical, counting every sideloaded app on
+  the device — including apps a device ships with from the manufacturer (see the
+  [App Trust Engine](06-app-trust-engine.md)'s OEM-preload exclusion) and a developer's own
+  test builds installed via Android Studio. Neither is evidence of a RAT. The rule now
+  counts only apps the App Trust Engine's own evidence ladder already flagged NEEDS REVIEW
+  or worse — i.e. sideloaded *and* showing some other concerning signal, not sideloaded
+  status alone.
+- **USB debugging and Developer Options, alone, are no longer scored at all.** These are
+  ordinary, common settings for developers and power users, and a RAT's threat model is
+  remote/network control — not "a computer is physically plugged into your unlocked phone."
+  Scoring them by default penalized exactly the people most likely to have them on for
+  entirely legitimate reasons. The one combination still worth naming is **root and USB
+  debugging together**, since that combination meaningfully widens what anyone with
+  physical access to the device could do in a way neither setting implies alone.
+- **Accessibility-service usage used to be scored three times** — once each in App
+  Behavior, System Security, and Permission Abuse — for the same underlying fact. It's now
+  scored once, in App Behavior, so a single legitimate accessibility app (a screen reader,
+  a password manager's autofill) doesn't get triple-weighted into the composite.
+- **"Unique remote IPs contacted" was actually counting unique app package names.** The
+  always-on Network Analyzer has no real per-connection IP data at all — it only knows
+  per-app total bytes sent, never which server they went to. Found live: an "84 unique
+  remote IPs contacted" finding that was really 84 apps with any network activity in the
+  last hour. This now uses the [Network tab](02-network-tab.md)'s opt-in real connection
+  monitor's genuine IP data when it's turned on, and honestly reads 0 — not a fabricated
+  stand-in — when it isn't.
+- **The beacon-pattern rule ("frequent small packets") compared a whole-month byte total to
+  1KB**, which in practice almost never fires for any real, actively-used app — not a false
+  alarm, but not real detection either, since spotting a genuine beacon pattern (many small
+  connections repeating to the same place) needs real per-connection data the always-on
+  path doesn't have. Now uses the same opt-in connection monitor's real reconnect data when
+  active.
+
+The honesty principle behind the three device-configuration rules: a setting or install
+source is a fact about the device, not evidence about a specific threat, until it's
+correlated with something else that actually looks like RAT behavior. The network-total
+fix above is a different kind of problem — a genuine measurement bug, not a philosophy
+question — but the fix belongs in the same list because the user-visible effect was
+identical: a score that didn't reflect what the device was actually doing.
 
 ## Worked example
 

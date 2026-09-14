@@ -32,8 +32,8 @@ It draws on the [pre-installation scanner](pre-installation/README.md), the
 | Accessibility-service based remote control (reading the screen, simulating taps/gestures) | ✅ Covered | A strong indicator in the App Trust Engine on its own for an untrusted app; combined with an overlay permission it's treated as a confirmed persistence/control pattern. |
 | Overlay-based screen takeover (drawing over other apps, fake buttons/screens) | ✅ Covered | Same engine — accessibility + draw-over-other-apps together is explicitly named as "a classic RAT/banking-trojan pattern." |
 | Device Administrator abuse (block uninstall, force lock, wipe, password reset) | ✅ Covered | Holding Device Admin rights is a strong indicator by itself for an untrusted app, and disqualifies an app from the automatic "trusted" fast-path even if it's from the Play Store. |
-| Screen recording / screen capture (MediaProjection) | 🟡 Partial | RAT3 can technically ask Android whether screen recording is active — the capability exists at the native layer — but nothing in the app currently calls it from any tab. It's built but disconnected, not surfaced anywhere a user would see it. |
-| Silent app install/uninstall (installing or removing other apps without the user tapping through the system dialog) | ❌ Not covered | An earlier version of the app-scoring engine checked for this permission; the rewrite that fixed the WhatsApp/PhonePe false-positive problem (see the [App Trust Engine](post-installation/06-app-trust-engine.md)) dropped it and it was never re-added. A real gap, not a design choice. |
+| Screen recording / screen capture (MediaProjection) | ✅ Covered | Surfaced on the Sensor Scan screen alongside the mic/camera checks — a real device-state read (Android 14+ MediaProjection API, plus known-recorder-app and capture-permission heuristics on older versions), not a permission-holder guess. |
+| Silent app install/uninstall (installing or removing other apps without the user tapping through the system dialog) | ✅ Covered | Re-added to the App Trust Engine as weak-tier evidence signals on untrusted apps — `REQUEST_INSTALL_PACKAGES` for the install side, `REQUEST_DELETE_PACKAGES` (silently removing apps it installed itself, no confirmation dialog) for the uninstall side. Both never escalate alone, since browsers, file managers, and app stores legitimately hold these too. |
 | Direct remote command execution (a live shell/C2 channel controlling the device in real time) | 🚫 Not possible directly | RAT3 cannot inspect another app's running code or its decrypted network traffic without root. What it *can* do is notice the pattern such control tends to produce — see the Network-level section below — which is indirect, correlational evidence, not proof of a live command channel. |
 
 ## 2. Surveillance & data collection
@@ -45,10 +45,10 @@ It draws on the [pre-installation scanner](pre-installation/README.md), the
 | Reading on-screen content via accessibility (anything visible, including emails and chats being viewed) | ✅ Covered | Same tier as the two above; also double-counted deliberately as a distinct "screen control" capability where it overlaps with overlay abuse — explained in the Trust Engine doc's technical note. |
 | Camera / microphone spying | ✅ Covered | Checked as genuine real-time hardware state (is it active *right now*), not just "holds the permission" — both as a Sensor Behavior signal on the Dashboard and as a strong App Trust Engine indicator for untrusted apps. |
 | Background/continuous location tracking | ✅ Covered | Background-location access is both a weak/medium trust-engine indicator and a dedicated Sensor Behavior signal on the Dashboard. |
-| Reading contacts or call logs | 🟡 Partial | These permissions are counted only inside a generic "how many dangerous permissions does this app hold" tally — unlike SMS, notifications, and screen content, they never get their own named "can read your contacts" or "can read your call log" finding. |
-| Clipboard monitoring (stealing copied passwords, 2FA codes, crypto wallet addresses) | 🟡 Partial | Same situation as screen recording — a native capability to check clipboard-access activity exists, but no Dart feature or screen calls it. Built, not connected. |
-| Keystroke logging via accessibility | 🟡 Partial | Explicitly named as a keylogging technique in the *pre-installation* scanner (checking an APK before install), but the *post-installation* App Trust Engine doesn't call this out as its own named finding — it's folded into the general accessibility-abuse indicators instead of stated by name. An inconsistency between the two engines, not a total gap. |
-| File exfiltration (reading storage, then uploading it) | 🟡 Partial | Storage permission is counted generically; a matching network upload isn't correlated with it and named as "likely exfiltrating files" the way sensor activity + network activity is on the Dashboard. |
+| Reading contacts or call logs | ✅ Covered | Each now gets its own named Private Data Access finding ("Can read your contacts" / "Can read your call log"), the same tier and treatment as SMS and notifications. |
+| Clipboard monitoring (stealing copied passwords, 2FA codes, crypto wallet addresses) | ✅ Covered | Surfaced on the Sensor Scan screen: lists background apps holding a capability (input-method or accessibility service) that can read clipboard content. Holding the capability isn't proof of misuse — shown as a "who could" list, not an accusation. |
+| Keystroke logging via accessibility | ✅ Covered | The post-installation App Trust Engine's accessibility finding now names keylogging explicitly, matching the pre-installation scanner's wording, instead of only implying it through generic accessibility-abuse language. |
+| File exfiltration (reading storage, then uploading it) | ✅ Covered | The App Trust Engine now correlates broad storage/media access with a real (cumulative, not "just now") sent-data floor into a named finding — worded as "has sent data," not "is exfiltrating," consistent with the project's rule against reading a cumulative TrafficStats number as a live claim. |
 | Silent screenshot capture (without the recording indicator a user would notice) | 🚫 Not possible | Android doesn't expose a way for a third-party app — RAT3 included — to detect another app quietly taking screenshots without root. |
 
 ## 3. Persistence & evasion
@@ -56,8 +56,8 @@ It draws on the [pre-installation scanner](pre-installation/README.md), the
 | Behavior | Status | Note |
 |---|---|---|
 | Auto-starting on device boot | ✅ Covered | Holding boot-persistence permission is one of the factors in the App Trust Engine's trust-baseline check — an otherwise-trusted-looking app combining this with other capabilities loses its automatic pass. |
-| Hiding its own launcher icon | 🟡 Partial | Whether an app has any visible activity at all is already read from the device and fed into the on-device ML classifier as one of its ~199 input features — but it never becomes its own plain-language finding like "this app hides its icon." It influences a score behind the scenes without being named. |
-| Disabling or evading Google Play Protect | 🟡 Partial | Whether Play Protect's app-verification is turned on is read from the device, but that reading is never actually used anywhere afterward — not fed into the Dashboard's score, not shown as a finding. It's collected and then dropped. |
+| Hiding its own launcher icon | ✅ Covered | Post-install, checked directly (`PackageManager.getLaunchIntentForPackage` returning null) and surfaced as its own named App Trust Engine finding on untrusted apps — separate from the pre-install ML classifier's `activityCalled` feature, which judges an APK before install and still influences that score behind the scenes without being named. |
+| Disabling or evading Google Play Protect | ✅ Covered | Now wired into the Risk Scoring Engine as a low-severity System Security signal, instead of being read and dropped. |
 | Dynamic code loading after install (fetching and running new code the installed APK didn't originally contain) | ❌ Not covered post-install | The *pre-installation* scanner does check an APK's code for dynamic-loading calls before you ever install it. Once an app is running, RAT3 has no way to observe it loading new code at runtime without root, and nothing currently tries. |
 | Anti-analysis tricks (detecting it's being inspected, an emulator, or a debugger, and hiding behavior in response) | 🚫 Not possible | This only matters to the *pre-installation* static scan, and even there, RAT3 has no dynamic/behavioral sandbox — it can't run the APK to see if it behaves differently under observation. Out of scope for what a static, on-device scan can ever do. |
 | Root/su abuse by an installed app specifically (as opposed to the device simply being rooted) | 🟡 Partial | Whether *the device itself* is rooted is a real, named Dashboard signal. Whether *a specific app* is the one using that root access is not attributable — RAT3 has no way to see which app issued a root command without being root itself. |
@@ -84,27 +84,32 @@ connection monitor and the Dashboard's Network & Resource signals are for.
 | Beaconing pattern (many small, evenly-spaced packets — a heartbeat to a C2 server) | ✅ Covered | A dedicated Network & Resource rule on the Dashboard. |
 | Unusual data volume, especially during idle hours or in the background | ✅ Covered | Multiple named Dashboard rules, and one of the two halves of the Dashboard's flagship "sensor activity + network upload at the same moment" correlation rule. |
 | Real per-connection IP, port, protocol, and owning-app identification | ✅ Covered | This is the entire point of the VPN engine — genuine per-connection visibility via Android's connection-ownership API, not a data-usage estimate. Opt-in, off by default, since it requires the system VPN consent dialog. |
-| DNS-based command-and-control (contacting algorithmically-generated domains, "domain generation algorithms") | ❌ Not covered | The connection monitor works at the IP level; it doesn't currently inspect or correlate DNS queries/resolved domain names. |
+| DNS-based command-and-control (contacting algorithmically-generated domains, "domain generation algorithms") | 🟡 Partial | The connection monitor now parses the queried domain out of outbound DNS (UDP:53) queries and applies a conservative DGA-style heuristic (label length + character entropy / consonant runs) as one weak signal among several — it names *this query's own* domain, not a NAT-level correlation from a later connection's IP back to the domain that resolved it, which remains out of scope. Deliberately conservative (requires both unusual length and unusual entropy) since random-looking subdomains are also routine on legitimate CDN/cloud infrastructure. |
 | Traffic content analysis (what's actually inside an encrypted connection) | 🚫 Not possible | RAT3 cannot decrypt HTTPS traffic without a TLS-intercepting proxy, which is a much larger, much more invasive undertaking than a connection monitor. Everything the Network tab knows about a connection is metadata — who, where, how often — never payload content. |
-| IPv6 traffic | ❌ Not covered | The VPN engine is explicitly IPv4-only in this version; IPv6 packets are outside what it currently relays or inspects. Stated as a scope limit, not discovered silently. |
+| IPv6 traffic | 🟡 Partial | The VPN engine now parses, relays, and tracks IPv6 TCP/UDP traffic (fixed 40-byte header only — packets using IPv6 extension headers are not specially handled). The packet-level logic is unit-tested (header parsing, building, and checksum correctness), but unlike the IPv4 path — verified against real heavy browsing on a physical device — the IPv6 path has **not** been verified against real IPv6 network traffic on a device. Treat it as implemented-but-unverified, not production-proven, until that verification happens. |
 | Detecting an app that evades the VPN/routes around monitoring entirely | 🚫 Not possible | If something on the device could bypass RAT3's VPN capture outright, RAT3 has no independent vantage point left to notice that it happened. |
 
 ---
 
 ## Why some of these gaps exist and haven't been closed yet
 
-- **The Private Data Access category (SMS, notifications, screen content) was deliberately
-  scoped narrowly** to the things Android will actually tell any app without special
-  privileges — extending the same treatment to contacts/call logs, clipboard, and file
-  access is a natural next step, not a design rejection.
-- **Screen-recording and clipboard detection exist at the native layer already** — the
-  Kotlin methods behind them were built as part of this session's work and are exposed
-  across the platform bridge, but nothing ever calls them from a screen or a monitoring
-  layer. This is the cheapest gap to close of everything on this page, since the hard
-  part (reading the signal from Android) is already done.
-- **Silent-install detection was lost, not never-built** — it existed in the scoring
-  engine that was replaced to fix the WhatsApp/PhonePe/Google Pay false-positive problem,
-  and simply wasn't carried over into the rewritten App Trust Engine.
+- **The Private Data Access category started narrowly scoped, then grew.** It originally
+  covered only the things Android will tell any app without special privileges (SMS,
+  notifications, screen content); contacts, call logs, clipboard, screen recording, and a
+  correlated file-exfiltration signal have all since been added following the same pattern.
+- **Silent-install detection was lost, then re-added — and its uninstall-side companion
+  added alongside it.** The install-side check existed in the scoring engine that was
+  replaced to fix the WhatsApp/PhonePe/Google Pay false-positive problem, wasn't carried
+  over into the rewritten App Trust Engine, and has since been re-added as a weak-tier
+  evidence signal, together with a matching `REQUEST_DELETE_PACKAGES` check it never had
+  before.
+- **DNS/domain visibility and IPv6 support are new, and asymmetrically verified.** The DGA
+  heuristic and the App Trust Engine additions above are ordinary logic changes, tested the
+  same way the rest of this codebase is (`flutter test` / `./gradlew testDebugUnitTest`).
+  The IPv6 packet-relay path is different: it's unit-tested at the packet level (header
+  parsing, building, checksum correctness) but has not been exercised against real IPv6
+  network traffic on a physical device the way the IPv4 relay was. Flagged explicitly in
+  its own row above rather than presented with the same confidence as the rest of this page.
 - **Everything marked "not possible" is a genuine Android platform limit**, not a gap in
   effort — matching the same policy the rest of these docs follow: state a limitation
   plainly rather than imply a false all-clear.

@@ -61,6 +61,14 @@ The signals that count:
 4. **The owning app was already flagged** — if the [Scan All Apps](06-app-trust-engine.md)
    audit already found this specific app suspicious or worse, any connection from it needs
    less additional evidence to be worth a second look.
+5. **A DNS query for an algorithmically-generated-looking domain** — when a connection
+   *is* a DNS query, its own queried domain name is checked against a conservative
+   heuristic (unusual length **and** unusual character entropy, or a long run of
+   consonants). This names what *that query itself* was resolving, not a correlation from
+   a later connection's IP back to the domain that resolved it — RAT3 does not track that
+   link. Deliberately conservative: many legitimate CDN/cloud services also use
+   random-looking subdomains, so this is one weak signal among the others here, never
+   enough on its own to reach SUSPICIOUS.
 
 ## Worked examples
 
@@ -93,3 +101,10 @@ well-established, Play-Store-installed app.** One signal only (the port). →
   same honesty caveat as the pre-installation scanner's blocklist. They demonstrate the
   mechanism; a production deployment would want a real, maintained threat-intelligence
   feed behind them.
+- **IPv6 traffic is now relayed and tracked, but unverified on a real device.** The
+  packet-level parsing, building, and checksum logic is unit-tested and mirrors the IPv4
+  path exactly, but — unlike IPv4, which was tested against real heavy browsing — nobody
+  has yet run this build on a device with real IPv6 network traffic. Treat it as
+  implemented, not as proven. Packets using IPv6 extension headers (rare outside
+  specialized traffic) are not specially handled and will be dropped like any other
+  unsupported shape, not misparsed.

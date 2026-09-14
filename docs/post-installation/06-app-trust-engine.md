@@ -31,6 +31,31 @@ of how many permissions it holds, how much data it sends, or how long it runs in
 background. This one check is what keeps WhatsApp, a banking app, YouTube, or any other
 ordinary, established app from ever being flagged, no matter what it legitimately does.
 
+## Apps that came with the phone are skipped entirely, not just trusted
+
+Before the baseline check even runs, RAT3 excludes apps that were **preloaded by the
+manufacturer or carrier**, not installed by you — not just from the top verdict, but from
+scanning at all (no evidence-ladder evaluation, no permission checks, nothing). Android
+has no direct flag for this the way it does for true `/system` apps; a great many
+manufacturer and carrier apps (a bundled file-transfer tool, a carrier's own portal app, a
+pre-loaded ride-hailing or delivery app) ship as perfectly ordinary, non-system packages
+that still came factory-installed, never downloaded by you.
+
+The signal RAT3 uses: every app flashed as part of the original device image gets (almost)
+the exact same install timestamp, clustered at the phone's first boot. Anything you
+install afterward — even the same day you unbox the phone — gets a timestamp that's
+meaningfully later. RAT3 finds the earliest install timestamp across every app on the
+device and treats anything within about three days of it as "came with the phone,"
+regardless of that app's actual installer or system-partition status.
+
+This isn't just a fairness detail — it fixes a real, measurable bug: a phone's bundled
+apps typically have no recorded installer (they weren't installed *by* anything — they
+were part of the image), and until this exclusion existed, "no recorded installer" was
+being read as "sideloaded," which meant a device with a dozen ordinary manufacturer apps
+could push the Dashboard toward CRITICAL for a reason that had nothing to do with the
+owner's own choices. See the [Risk Scoring Engine](07-risk-scoring-engine.md)'s note on
+rules that were removed or changed for the rest of that story.
+
 ## For everything else: an evidence ladder, not a single score
 
 Apps that don't clear the trust baseline (sideloaded, from an unknown source, installed
@@ -40,8 +65,8 @@ takes a combination, never a single fact alone**, except for a confirmed match.
 
 | Tier | Examples of evidence at this tier | What it takes to move up a verdict level |
 |---|---|---|
-| **Weak** | Sideloaded / unknown install source, installed within the last 7 days, targets a very old Android version | Never escalates alone — takes **two or more** together |
-| **Medium** (Private Data Access) | Can read SMS messages, can read notifications (including message/email previews), accessibility can read on-screen content, tracks background location | **One** is enough to flag for review; **two or more** together escalate further |
+| **Weak** | Sideloaded / unknown install source, installed within the last 7 days, targets a very old Android version, can install other apps without the system installer prompt (`REQUEST_INSTALL_PACKAGES`), can silently uninstall apps it installed itself (`REQUEST_DELETE_PACKAGES`), has no visible icon or launch screen | Never escalates alone — takes **two or more** together |
+| **Medium** (Private Data Access) | Can read SMS messages, can read notifications (including message/email previews), accessibility can read on-screen content, tracks background location, can read contacts, can read call log, holds broad file/media access **and** has sent a non-trivial amount of network data | **One** is enough to flag for review; **two or more** together escalate further |
 | **Strong** | Accessibility service combined with overlay/device-admin/auto-start, real active camera/microphone use right now, can draw over other apps *and* read the screen, holds Device Administrator rights | **One** is enough to flag as suspicious; **two or more** together reach the top tier |
 | **Confirmed** | The installed app's file matches a known-malicious file hash (the same blocklist the [pre-installation scanner](../pre-installation/03-signature-reputation-check.md) uses) | Reaches the top tier **on its own** — this is the one case where a single fact is enough, because it isn't a guess |
 

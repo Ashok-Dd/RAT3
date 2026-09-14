@@ -27,25 +27,47 @@ currently running:
 | **Layer 2 — Network Analyzer** | Per-app data usage deltas and a small suspicious-IP/port heuristic, re-checked roughly every 20 seconds. (The [Network tab](02-network-tab.md)'s opt-in real-time connection monitor is a separate, more detailed engine layered on top of this.) |
 | **Layer 3 — Permission Tracker** | Which *other* installed apps are actively using — or have heavy background time while holding — camera, microphone, or background-location access. See its own section below. |
 | **Layer 4 — Alert Engine** | Deduplicates and routes every layer's findings into the [Alerts tab](03-alerts-tab.md). |
-| **Layer 5 — Risk Engine** | Combines roughly 65 real-device signals into the Dashboard's overall score, roughly once a minute. See [Risk Scoring Engine](07-risk-scoring-engine.md). |
+| **Layer 5 — Risk Engine** | Combines roughly 65 real-device signals into the Dashboard's overall score. See [Risk Scoring Engine](07-risk-scoring-engine.md). |
 
 A master switch turns all five on or off together; turning them off also stops the
 background foreground-service notification.
 
-### Manual scan and auto-scan interval
+### What actually keeps running once you close the app
+
+This matters enough to be precise about: RAT3 has **two separate scanning engines**, not
+one, and only one of them is built to survive the app being fully closed.
+
+- **A native background service** — a small, focused set of checks: is the camera or mic
+  genuinely active right now, is any app uploading data in the background, is the device
+  rooted, is a sideloaded app holding several risky permissions at once, is an
+  accessibility service actually turned on. This is the one built for real persistence:
+  it uses two independent timers (one for while the screen is on, one that can wake the
+  CPU even during deep sleep), holds a wake lock while scanning, and re-arms itself again
+  even if a scan cycle fails — one failed cycle can't silently end the loop. It also
+  restarts itself after a reboot. This is what the **auto-scan interval** slider (5 minutes
+  to 3 hours, 10 minutes by default) actually controls, and it keeps running whether or not
+  you've opened RAT3 recently.
+- **The rich Layers 1–5 shown above, and the full Dashboard score** — these run inside the
+  app itself, and update immediately when you open the app and roughly once a minute while
+  it stays open. They do **not** currently have their own persistent background execution
+  the way the native service does; if Android fully stops the app process in the
+  background (some manufacturers, including Vivo's, are aggressive about this unless the
+  app is whitelisted), the detailed score pauses until you reopen RAT3 — the native layer
+  above keeps watching regardless, but it does not evaluate the full evidence ladder or
+  the six-category score the Dashboard shows.
 
 **Scan Now** runs an immediate check across all five layers instead of waiting for the
-next automatic cycle. The **auto-scan interval** slider controls how often that automatic
-cycle repeats on its own — anywhere from every 5 minutes to every 3 hours (10 minutes by
-default) — and this keeps happening even if you've closed the app, because the monitor
-runs as a genuine background service, not just "while the app is open."
+next automatic cycle.
 
 ### Sensor Scan
 
 A focused, one-tap check specifically for camera, microphone, and location abuse across
 every installed app — the same underlying real-time sensor data the Permission Tracker
 uses continuously, surfaced here as an on-demand list you can review at any time rather
-than waiting for an alert.
+than waiting for an alert. The same screen also checks whether screen recording is
+currently active and lists background apps holding a capability that can read clipboard
+content (input method or accessibility service) — real device-state reads, not permission
+tallies, same as the mic/camera checks above them.
 
 ### Scan All Apps
 

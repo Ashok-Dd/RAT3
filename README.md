@@ -48,7 +48,7 @@ Five bottom-nav tabs (post-install monitor), with the pre-install scanner folded
 | **Dashboard** | 5-tier Device Security Status (SAFE/MONITOR/SUSPICIOUS/HIGH RISK/CRITICAL), a calm scan summary ("no strong indicators... within what RAT3 can inspect"), findings by severity, risk breakdown |
 | **Network** | Process-level connection monitor (off by default — see below): real remote IP/port/protocol/persistence per app via a local VPN. Falls back to an aggregate per-app byte-usage list (clearly labeled supplementary) when the monitor isn't enabled |
 | **Alerts** | Every finding from all layers, filterable by severity, with notifications |
-| **Scanner** | *Device Monitor*: manual scan, auto-scan interval, layer status, Sensor Scan, **Scan All Apps** (Application Assessment: TRUSTED/NEEDS REVIEW/SUSPICIOUS/MALICIOUS INDICATORS, each with an explainable evidence list). *Scan an APK*: pick an APK → 4-layer pre-install analysis |
+| **Scanner** | *Device Monitor*: manual scan, auto-scan interval, layer status, Sensor Scan (camera/mic + screen-recording + clipboard-access checks), **Scan All Apps** (Application Assessment: TRUSTED/NEEDS REVIEW/SUSPICIOUS/MALICIOUS INDICATORS, each with an explainable evidence list) → **Trusted Apps** (your own "I've vetted this" allowlist, skips future evaluation). *Scan an APK*: pick an APK → 4-layer pre-install analysis |
 | **Settings** | Monitoring / notification toggles, **Fix permissions** (re-run onboarding), reset risk score |
 
 A first-run **onboarding** screen requests: notifications, usage access, battery-optimisation
@@ -85,13 +85,18 @@ status: a Play-Store-installed, established app with no accessibility+overlay/ad
 combination is always **TRUSTED**, regardless of permission count, network use, or background
 time — this is the fix for a real bug where WhatsApp/PhonePe/Google Pay/YouTube were flagged
 SUSPICIOUS/MALICIOUS purely for holding permissions and running in the background. Weak signals
-(sideloaded, recent install, old target SDK) never escalate alone; **Private Data Access**
-signals (can read SMS, can read notifications via `Settings.Secure.enabled_notification_listeners`,
-accessibility can read on-screen content) need one to reach NEEDS REVIEW and two for SUSPICIOUS on
-an untrusted app — shown calmly and factually, never as an "uninstall now" scare; strong signals
-(accessibility+overlay, real active camera/mic via AppOps — not just "process is running" — on an
-untrusted app, device admin) need one for SUSPICIOUS and two for MALICIOUS INDICATORS; a blocklist
-SHA-256 hash hit is the only solo path to MALICIOUS INDICATORS.
+(sideloaded, recent install, old target SDK, `REQUEST_INSTALL_PACKAGES`/`REQUEST_DELETE_PACKAGES`
+granted, no visible launcher icon) never escalate alone; **Private Data Access** signals (can read
+SMS, can read notifications via `Settings.Secure.enabled_notification_listeners`, can read
+contacts, can read call log, accessibility can read on-screen content — named explicitly as a
+keylogging/overlay technique, matching the pre-install scanner's wording — broad storage/media
+access *combined with* a real 50MB+ sent-data floor) need one to reach NEEDS REVIEW and two for
+SUSPICIOUS on an untrusted app — shown calmly and factually, never as an "uninstall now" scare;
+strong signals (accessibility+overlay, real active camera/mic via AppOps — not just "process is
+running" — on an untrusted app, device admin) need one for SUSPICIOUS and two for MALICIOUS
+INDICATORS; a blocklist SHA-256 hash hit is the only solo path to MALICIOUS INDICATORS. An app the
+user explicitly marks trusted (`UserTrustStore.kt`, surfaced in the **Trusted Apps** screen) skips
+the whole ladder on future scans.
 
 ### Real-Time Connection Monitor — Network tab
 
@@ -105,9 +110,21 @@ there is no way to see real per-connection remote IP/port/protocol without a loc
 connection is never flagged, no matter how much data it moves:
 - **NORMAL**: everything else, including a trusted app's routine HTTPS traffic.
 - **NEEDS INVESTIGATION**: exactly one signal — persistent/repeated communication with the same
-  endpoint, a known suspicious port, a known-bad IP range, or the owning app already flagged by
-  the last Scan All Apps run.
+  endpoint, a known suspicious port, a known-bad IP range, the owning app already flagged by
+  the last Scan All Apps run, or a DNS-query domain that looks algorithmically generated
+  (`looksAlgorithmicallyGenerated()` — length + entropy/consonant-run heuristic, deliberately
+  conservative since random-looking CDN/cloud subdomains are a known false-positive source).
 - **SUSPICIOUS**: two or more of those signals correlated together.
+
+Both **IPv4 and IPv6** TCP/UDP are relayed and tracked (`IpPacket.kt`'s `IpHeader` abstraction,
+`parseIpv4`/`parseIpv6`, version-inferred packet building with the correct 12-byte/40-byte
+pseudo-header checksum per RFC 8200). `DnsParser.kt` extracts the queried domain from outbound
+UDP:53 queries and attaches it to that connection record — naming what *that query itself* was
+resolving, not a NAT-level correlation from a later connection's IP back to the domain that
+resolved it. **The IPv6 path is unit-tested at the packet level (`IpPacketTest.kt`, including an
+RFC 8200 checksum-substitution edge case) but has not been verified against real IPv6 traffic on
+a physical device**, unlike the IPv4 path — treat it as implemented, not as proven; see
+`docs/rat-behavior-coverage.md`'s IPv6 row.
 
 **Technical risk, stated plainly**: keeping the device's internet working while inspecting every
 connection means `TcpRelay.kt` has to terminate the client's TCP connection at the tun interface
@@ -133,7 +150,7 @@ lib/
   layers/  runtime_monitor · network_monitor · connection_monitor ·
            permission_tracker · alert_engine · risk_engine · feature_engine
   presentation/  app_shell · onboarding · dashboard · network · alerts ·
-                 scanner (segmented) · sensors · app_scan · settings
+                 scanner (segmented) · sensors · app_scan · settings · trusted_apps
   features/apk_scan/  apk_scan_landing · scanning_screen · result_screen ·
                       services/{apk_scanner_service,channels} · models/scan_result
   widgets/  common_widgets (CyberCard, SectionHeader, badges, ScanPulse) · risk_ball
@@ -142,10 +159,11 @@ android/app/src/main/kotlin/com/example/rat3/
   MainActivity.kt          five channels: /security (monitor) + /scanner /file /install /progress
   ScanForegroundService.kt · ScanAlarmReceiver.kt · BootReceiver.kt
   scanner/  ApkContext (parse once) · Layer1-3 · Layer4MlClassifier · DecisionEngine ·
-            AppTrustEngine · Signatures · Reputation · ScannerConfig · ScannerUtils ·
+            AppTrustEngine · UserTrustStore · DeviceAppUtils (shared with ScanForegroundService) ·
+            Signatures · Reputation · ScannerConfig · ScannerUtils ·
             ml/{MlModels,TuandromdFeatures}
-  vpn/      RatVpnService · IpPacket · TcpRelay · UdpRelay · ConnectionTracker
-            (off-by-default real-time connection monitor — see above)
+  vpn/      RatVpnService · IpPacket (IPv4+IPv6) · TcpRelay · UdpRelay · ConnectionTracker ·
+            DnsParser (off-by-default real-time connection monitor — see above)
 android/app/src/main/assets/
   signatures.json · blocklist.json · trusted_certs.json · ml/*.json (exported models)
 
@@ -214,17 +232,25 @@ Upload an APK to run all **five** models (Stacking included) server-side.
   `Layer3SignatureScannerTest.kt` — per-layer scoring rules (Layer3 via Robolectric, to read the
   real bundled `assets/*.json`)
 - `android/.../AppTrustEngineTest.kt` — the Scan All Apps false-positive regression suite
-  (WhatsApp/PhonePe/Google Pay/YouTube-shaped fixtures) alongside the positive-detection scenarios
+  (WhatsApp/PhonePe/Google Pay/YouTube-shaped fixtures) alongside the positive-detection scenarios,
+  plus the newer weak/medium-tier signals (silent install/uninstall, contacts, call log, the
+  file-exfiltration correlation, no-launcher-icon, keylogging wording)
 - `android/.../ml/MlEnsembleParityTest.kt` — Kotlin ML evaluators vs the Python models (±2.5 %)
 - `test/connection_monitor_test.dart` — the connection-correlation rules (one signal never
-  escalates past NEEDS INVESTIGATION, two reach SUSPICIOUS)
-- `android/.../vpn/IpPacketTest.kt` — IPv4/TCP/UDP packet build+parse round-trips and
-  self-verifying checksum math (a wrong checksum silently drops every relayed packet on-device)
+  escalates past NEEDS INVESTIGATION, two reach SUSPICIOUS), plus the DGA-heuristic tests
+  (`looksAlgorithmicallyGenerated` correctly leaves google.com/wikipedia.org/whatsapp.com alone)
+- `android/.../vpn/IpPacketTest.kt` — IPv4 **and IPv6** TCP/UDP packet build+parse round-trips,
+  self-verifying checksum math for both (a wrong checksum silently drops every relayed packet
+  on-device), and a 65536-case differential search confirming the IPv6 UDP checksum is never
+  wired as the RFC-8200-invalid `0x0000`
+- `android/.../vpn/DnsParserTest.kt` — DNS query-name extraction, including the "never surface
+  binary garbage as a domain, never throw on adversarial input" defensive paths
 
 **Not yet done — needs a live device**: confirm the VPN relay keeps browsing/calls/streaming
 working while active, and that the connection list populates with real IP/port/protocol entries.
 `TcpRelay.kt` is unit-testable at the packet level but its actual relay behavior can only be
-proven on-device.
+proven on-device. **The IPv6 relay path specifically has no real-device verification at all yet**
+(IPv4 does) — it's unit-tested and independently code-reviewed, not field-proven.
 
 ---
 
@@ -238,7 +264,17 @@ proven on-device.
 - `TcpRelay.kt` has no retransmission/congestion-window logic (see its doc comment) — fine for a
   monitoring tool given the tun↔kernel path isn't a lossy link, but worth hardening if real-world
   use turns up connection drops on flaky networks.
-- IPv6 is out of scope for the connection monitor (IPv4 only) — dropped explicitly, not misparsed.
+- **Verify the IPv6 relay path on a real device.** IPv6 support (parsing, relaying, tracking,
+  RFC-8200-correct checksums) was added and is unit-tested/code-reviewed, but — unlike the IPv4
+  path, tested against real heavy browsing — nobody has yet run this build on a device with real
+  IPv6 network traffic. Packets using IPv6 extension headers are also out of scope (dropped, not
+  misparsed — see `IpPacket.kt`'s class doc comment); this covers the ordinary fixed-40-byte-header
+  case an HTTP/HTTPS/QUIC session actually produces.
+- DNS/domain visibility is per-query only — no NAT-level correlation from a resolved IP back to
+  the domain that resolved it. Would need tracking the (app, destination IP, timestamp) tuple
+  against recent DNS answers, which the parser currently skips entirely (query side only).
+- Silent-uninstall detection (`REQUEST_DELETE_PACKAGES`) covers apps removing *what they
+  installed themselves* — there's no broader Android signal for "can this app uninstall anything."
 - Play Store publish-readiness (deliberately not started): Play-compliant package-visibility
   instead of `QUERY_ALL_PACKAGES`, Data Safety form, hosted privacy policy, real app icon,
   Crashlytics, Play App Signing enrollment.
