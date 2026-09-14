@@ -28,6 +28,7 @@ import androidx.core.content.FileProvider
 import com.example.rat3.scanner.ApkContext
 import com.example.rat3.scanner.AppTrustEngine
 import com.example.rat3.scanner.DecisionEngine
+import com.example.rat3.scanner.DeviceAppUtils
 import com.example.rat3.scanner.Layer1SafetyAnalyzer
 import com.example.rat3.scanner.Layer2PermissionMismatch
 import com.example.rat3.scanner.Layer3SignatureScanner
@@ -77,6 +78,25 @@ class MainActivity : FlutterActivity() {
         // stops, so "is it active now" needs a much wider lookback than Activity foreground
         // (which reliably pairs MOVE_TO_FOREGROUND with MOVE_TO_BACKGROUND within seconds).
         private const val FOREGROUND_SERVICE_LOOKBACK_MS = 6 * 60 * 60 * 1000L
+
+        // Broad file/media read access — used only in combination with real sent-data
+        // evidence (see the App Trust Engine's file-exfiltration correlation), never alone.
+        private val STORAGE_PERMISSIONS = setOf(
+            "android.permission.READ_EXTERNAL_STORAGE",
+            "android.permission.READ_MEDIA_IMAGES",
+            "android.permission.READ_MEDIA_VIDEO",
+            "android.permission.READ_MEDIA_AUDIO",
+        )
+        // A cumulative TX floor, not a "just now" claim -- TrafficStats' per-UID counters are
+        // totals since last boot, and this codebase has already been bitten once (see CHANGELOG)
+        // by treating a cumulative number as if it were live. This only ever contributes evidence
+        // alongside real storage access, and is worded as "has sent data," not "is sending now."
+        // 50MB matches this codebase's own established bar for "meaningful data volume" (see the
+        // Risk Engine's "High Data Usage" rule and its CHANGELOG note) -- an earlier version of
+        // this threshold was set to 1MB, trivially crossed by nearly any actively-used app within
+        // minutes, which would have made this "correlation" barely more selective than storage
+        // access alone. Caught in a follow-up self-review before it ever ran on a device.
+        private const val EXFIL_CORRELATION_BYTES_THRESHOLD = 50_000_000L
     }
 
     // ── pre-install scanner state ───────────────────────────────────────────────────────
@@ -263,6 +283,16 @@ class MainActivity : FlutterActivity() {
                 val deviceAdminActivePkgs = getActiveDeviceAdminPackages()
                 val blocklist = try { Reputation.loadBlocklist(applicationContext) } catch (_: Exception) { emptySet() }
                 val userTrustedPkgs = UserTrustStore.getTrustedPackages(applicationContext)
+                val deviceSetupTimeMs = computeDeviceSetupTimeMs(packages)
+
+                // Real, device-wide hardware state — computed ONCE for the whole scan, not
+                // per app (checkCameraInUse() alone takes ~400ms). Camera has no per-app UID
+                // API on Android at all, so "is THIS app the one using it" is necessarily a
+                // best-effort candidate match (foreground + holds the permission), narrowed
+                // by a genuine "is a camera physically in use right now" check. Mic gets exact
+                // attribution when Android allows it (see getActiveRecordingUids's doc).
+                val cameraGenuinelyInUse = checkCameraInUse()
+                val micUidsInUse = getActiveRecordingUids()
 
                 val results = mutableListOf<Map<String, Any?>>()
 
@@ -283,9 +313,20 @@ class MainActivity : FlutterActivity() {
                             "com.google.android.permissioncontroller",
                         )
                         if (systemPrefixes.any { pkgName.startsWith(it) }) continue
+                        // Factory/carrier-preloaded (e.g. OEM bundleware) — already vetted by
+                        // the manufacturer before the device ever reached the user; not
+                        // something they installed, so not something RAT3 needs to scan.
+                        if (isOemPreinstalled(pkg, deviceSetupTimeMs)) continue
 
                         val dangerousGranted = getDangerousGrantedPermissions(pkg)
                         val allPermissions = pkg.requestedPermissions?.toList() ?: emptyList()
+                        val canInstallPackages = isPermissionGranted(pkg, "android.permission.REQUEST_INSTALL_PACKAGES")
+                        val canDeletePackages = isPermissionGranted(pkg, "android.permission.REQUEST_DELETE_PACKAGES")
+                        val hasContactsAccess = "android.permission.READ_CONTACTS" in dangerousGranted
+                        val hasCallLogAccess = "android.permission.READ_CALL_LOG" in dangerousGranted
+                        val hasStorageAccess = dangerousGranted.any { it in STORAGE_PERMISSIONS } ||
+                            isPermissionGranted(pkg, "android.permission.MANAGE_EXTERNAL_STORAGE")
+                        val hasNoLauncherIcon = packageManager.getLaunchIntentForPackage(pkgName) == null
                         val appName = try { pm.getApplicationLabel(appInfo).toString() } catch (_: Exception) { pkgName }
 
                         val installSource = getInstallSource(pkgName)
@@ -302,6 +343,7 @@ class MainActivity : FlutterActivity() {
                         val uid = appInfo.uid
                         val txBytes = TrafficStats.getUidTxBytes(uid).let { if (it >= 0) it else 0L }
                         val rxBytes = TrafficStats.getUidRxBytes(uid).let { if (it >= 0) it else 0L }
+                        val hasSentNetworkData = txBytes > EXFIL_CORRELATION_BYTES_THRESHOLD
 
                         // ── Real (not proxy) capability checks ───────────────
                         val userMarkedTrusted = userTrustedPkgs.contains(pkgName)
@@ -319,12 +361,19 @@ class MainActivity : FlutterActivity() {
                         val isTrusted = userMarkedTrusted || (isPlayStoreInstall && !isRecentInstall &&
                             !(hasAccessibility && (overlayGranted || hasDeviceAdmin || hasBootPersistence)))
 
-                        val camActiveNow = !isTrusted && isInForegroundNow && try {
+                        // Real active-use, not a permission-grant proxy. checkOpNoThrow only
+                        // tells you the app is ALLOWED to use the camera/mic -- it says
+                        // nothing about whether it's doing so right now, so an app merely
+                        // sitting in the foreground with the permission granted (which is
+                        // true for the entire time a normal camera app is open, using the
+                        // camera or not) used to satisfy this alone. Camera: narrowed to
+                        // candidates (active + holds the permission) only when hardware is
+                        // genuinely in use device-wide. Mic: exact per-UID match when
+                        // Android allows attribution (see getActiveRecordingUids).
+                        val camActiveNow = !isTrusted && isInForegroundNow && cameraGenuinelyInUse && try {
                             aom.checkOpNoThrow(AppOpsManager.OPSTR_CAMERA, uid, pkgName) == AppOpsManager.MODE_ALLOWED
                         } catch (_: Exception) { false }
-                        val micActiveNow = !isTrusted && isInForegroundNow && try {
-                            aom.checkOpNoThrow(AppOpsManager.OPSTR_RECORD_AUDIO, uid, pkgName) == AppOpsManager.MODE_ALLOWED
-                        } catch (_: Exception) { false }
+                        val micActiveNow = !isTrusted && uid in micUidsInUse
 
                         // ── Confirmed indicator: blocklist hash (skip the trusted fast-path
                         // apps to avoid hashing every installed APK on every scan) ──────────
@@ -351,6 +400,13 @@ class MainActivity : FlutterActivity() {
                                 hasNotificationAccess = notificationListenerPkgs.contains(pkgName),
                                 blocklistHit = blocklistHit,
                                 userMarkedTrusted = userMarkedTrusted,
+                                canInstallPackages = canInstallPackages,
+                                canDeletePackages = canDeletePackages,
+                                hasStorageAccess = hasStorageAccess,
+                                hasSentNetworkData = hasSentNetworkData,
+                                hasContactsAccess = hasContactsAccess,
+                                hasCallLogAccess = hasCallLogAccess,
+                                hasNoLauncherIcon = hasNoLauncherIcon,
                             ),
                         )
 
@@ -470,18 +526,10 @@ class MainActivity : FlutterActivity() {
     }
 
     /** Package names with a currently-ENABLED accessibility service (real, not just declared —
-     *  same API used by handleGetActiveAccessibilityServices/handleGetDetailedSecurityFlags). */
-    private fun getActiveAccessibilityServicePackages(): Set<String> {
-        return try {
-            val am = getSystemService(ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager
-            am.getEnabledAccessibilityServiceList(android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
-                .mapNotNull { it.resolveInfo?.serviceInfo?.packageName }
-                .toSet()
-        } catch (e: Exception) {
-            Log.w(TAG, "getActiveAccessibilityServicePackages failed: ${e.message}")
-            emptySet()
-        }
-    }
+     *  same API used by handleGetActiveAccessibilityServices/handleGetDetailedSecurityFlags).
+     *  Shared with ScanForegroundService via DeviceAppUtils so both scanners agree. */
+    private fun getActiveAccessibilityServicePackages(): Set<String> =
+        DeviceAppUtils.getActiveAccessibilityServicePackages(this)
 
     /** Package names with active Device Administrator rights. */
     private fun getActiveDeviceAdminPackages(): Set<String> {
@@ -515,7 +563,39 @@ class MainActivity : FlutterActivity() {
         return granted
     }
 
+    /** Whether [pkg] both declares and was actually granted [permission]. */
+    private fun isPermissionGranted(pkg: PackageInfo, permission: String): Boolean {
+        val perms = pkg.requestedPermissions ?: return false
+        val flags = pkg.requestedPermissionsFlags ?: return false
+        val idx = perms.indexOf(permission)
+        return idx >= 0 && idx < flags.size &&
+            (flags[idx] and PackageInfo.REQUESTED_PERMISSION_GRANTED) != 0
+    }
+
     /** Returns install source: "play_store", "sideloaded", "system", "unknown" */
+    /**
+     * Distinguishes "came preloaded with the phone" from "the user installed this" — a
+     * distinction Android has no direct API for on non-system-partition OEM/carrier apps.
+     * Only true /system-partition apps get FLAG_SYSTEM; a great many manufacturer and
+     * carrier apps (MyJio, ShareMe, a bundled ride-hailing/delivery app, etc.) ship as
+     * ordinary non-system packages that are still factory-installed, never downloaded by
+     * the user. RAT3 has no business scanning those any more than it does the OS itself.
+     *
+     * Approach: every app flashed as part of the original device image gets (almost) the
+     * exact same firstInstallTime, clustered at first boot. Anything the user installs
+     * afterward — even the same day the phone arrives — gets a firstInstallTime that's
+     * meaningfully later. So: find the earliest firstInstallTime across every installed
+     * package on the device, and treat anything within a generous window of that as
+     * "came with the phone," regardless of its installer or FLAG_SYSTEM status.
+     */
+    // Shared with ScanForegroundService via DeviceAppUtils so both scanners agree on what
+    // counts as "came with the phone" -- see DeviceAppUtils.kt for the full reasoning.
+    private fun computeDeviceSetupTimeMs(packages: List<PackageInfo>): Long =
+        DeviceAppUtils.computeDeviceSetupTimeMs(packages)
+
+    private fun isOemPreinstalled(pkg: PackageInfo, deviceSetupTimeMs: Long): Boolean =
+        DeviceAppUtils.isOemPreinstalled(pkg, deviceSetupTimeMs)
+
     private fun getInstallSource(pkgName: String): String {
         return try {
             val installer = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -627,6 +707,7 @@ class MainActivity : FlutterActivity() {
                 Log.d(TAG, "getUserAppsUsingSensors: raw package count = ${packages.size}")
 
                 val usageMap = getUsageStatsMap()
+                val deviceSetupTimeMs = computeDeviceSetupTimeMs(packages)
 
                 val sensorPermissions = setOf(
                     "android.permission.CAMERA",
@@ -651,6 +732,7 @@ class MainActivity : FlutterActivity() {
                         val isUpdatedSystem = (appInfo.flags and
                             android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
                         if (isSystem && !isUpdatedSystem) continue
+                        if (isOemPreinstalled(pkg, deviceSetupTimeMs)) continue
 
                         val appName = try {
                             pm.getApplicationLabel(appInfo).toString()
@@ -770,9 +852,10 @@ class MainActivity : FlutterActivity() {
 
     private fun handleCheckSensorInUse(result: MethodChannel.Result) {
         Thread {
-            // Real per-UID mic attribution — exact, not a guess (see getActiveRecordingUids).
+            // Yes/no detection must fail OPEN (see isAnyoneRecording's doc comment) --
+            // exact-UID attribution (best-effort, may come back empty) is separate.
+            val isMicInUse = checkMicInUse()
             val micUids = getActiveRecordingUids()
-            val isMicInUse = micUids.isNotEmpty() || checkMicInUseViaProc()
             val isCameraInUse = checkCameraInUse()
             // Camera has no per-UID API for a third-party app (Android doesn't expose one) —
             // the best available signal is "active right now", used below to narrow candidates.
@@ -886,37 +969,59 @@ class MainActivity : FlutterActivity() {
     //
     //  API 28+: AudioManager.isMicrophoneMuted() is NOT what we want.
     //  API 28+: AudioManager.getActiveRecordingConfigurations() — THIS IS IT.
-    //    Returns a list of all active AudioRecord sessions across ALL apps, including each
-    //    session's owning UID — so unlike camera (see checkCameraInUse below), mic use can be
-    //    attributed to an EXACT app, not just narrowed to a list of candidates.
-    //    This is 100% public API, works for background apps too.
+    //    Returns a list of all active AudioRecord sessions across ALL apps. The session's
+    //    owning UID (getClientUid()) would let us attribute a session to an EXACT app, but
+    //    that method is a hidden/non-SDK API — some Android versions block reflective access
+    //    to it under hidden-API enforcement, throwing on every call. When that happens we
+    //    must NOT read "couldn't determine the UID" as "not recording" — a session existing
+    //    at all, from configs.size alone, is a fully public, unrestricted signal on its own.
+    //    So the yes/no check (isAnyoneRecording) and the best-effort exact-UID check
+    //    (getActiveRecordingUids) are deliberately separate and fail in opposite directions:
+    //    the former fails OPEN (assume active) if it can't tell whose session it is, the
+    //    latter fails CLOSED (name nobody) rather than risk naming the wrong app.
     //
     //  API < 28 fallback: /proc/asound status files (no UID available there).
-    private fun checkMicInUse(): Boolean =
-        getActiveRecordingUids().isNotEmpty() || checkMicInUseViaProc()
+    private fun checkMicInUse(): Boolean = isAnyoneRecording() || checkMicInUseViaProc()
 
-    /** UIDs (excluding our own) with a live AudioRecord session right now. Empty on API < 28
-     *  or if the check fails — callers should treat that as "unknown", not "not recording". */
-    private fun getActiveRecordingUids(): Set<Int> {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return emptySet()
+    private fun isAnyoneRecording(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false
         return try {
             val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
             val configs = am.activeRecordingConfigurations
             Log.d(TAG, "MIC_PROBE: activeRecordingConfigurations = ${configs.size} session(s)")
-            val myUid = android.os.Process.myUid()
-            if (Build.VERSION.SDK_INT < 28) return emptySet() // clientUid needs API 28+
+            if (configs.isEmpty()) return false
+            if (Build.VERSION.SDK_INT < 28) return true // clientUid needs API 28+, can't exclude our own
 
+            val myUid = android.os.Process.myUid()
+            configs.any { cfg ->
+                try {
+                    val uid = cfg.javaClass.getMethod("getClientUid").invoke(cfg) as? Int
+                    uid != null && uid != myUid
+                } catch (_: Exception) { true } // reflection blocked -- fail OPEN, assume active
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "MIC_PROBE: getActiveRecordingConfigurations failed: ${e.message}")
+            false
+        }
+    }
+
+    /** UIDs (excluding our own) with a live AudioRecord session right now, when Android allows
+     *  attribution. Empty means "recording may still be happening — use [isAnyoneRecording] /
+     *  [checkMicInUse] for the actual yes/no" — it does NOT mean nobody is recording. */
+    private fun getActiveRecordingUids(): Set<Int> {
+        if (Build.VERSION.SDK_INT < 28) return emptySet()
+        return try {
+            val am = getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
+            val configs = am.activeRecordingConfigurations
+            val myUid = android.os.Process.myUid()
             configs.mapNotNull { cfg ->
                 try {
-                    // Reflection: getClientUid resolves fine at this API level, but keeping the
-                    // call this way avoids a hard compile-time bind for lower minSdk builds.
                     val uid = cfg.javaClass.getMethod("getClientUid").invoke(cfg) as? Int
                     Log.d(TAG, "MIC_PROBE: session uid=$uid source=${cfg.clientAudioSource}")
                     uid?.takeIf { it != myUid }
-                } catch (_: Exception) { null }
+                } catch (_: Exception) { null } // hidden-API restriction on this Android version
             }.toSet()
         } catch (e: Exception) {
-            Log.w(TAG, "MIC_PROBE: getActiveRecordingConfigurations failed: ${e.message}")
             emptySet()
         }
     }
@@ -1322,7 +1427,7 @@ class MainActivity : FlutterActivity() {
             val pkg = packageManager.getPackageInfo(packageName, PackageManager.GET_PERMISSIONS)
             result.success(pkg.requestedPermissions?.filterIndexed { i, _ ->
                 (pkg.requestedPermissionsFlags?.getOrNull(i) ?: 0) and
-                PackageManager.GET_PERMISSIONS != 0 } ?: emptyList<String>())
+                PackageInfo.REQUESTED_PERMISSION_GRANTED != 0 } ?: emptyList<String>())
         } catch (e: Exception) { result.error("PERM_ERROR", e.message, null) }
     }
 
@@ -1400,7 +1505,13 @@ class MainActivity : FlutterActivity() {
                 "isUsbDebuggingEnabled" to (Settings.Global.getInt(contentResolver,
                     Settings.Global.ADB_ENABLED, 0) == 1),
                 "isIgnoringBatteryOptimizations" to pm.isIgnoringBatteryOptimizations(packageName),
-                "hasUsageStatsPermission" to hasUsageStatsPermission()))
+                "hasUsageStatsPermission" to hasUsageStatsPermission(),
+                // Real screen-on/off state (PowerManager.isInteractive) -- added so
+                // "camera/mic active while screen is off" can check the actual screen
+                // state instead of a CPU-usage proxy (a static viewfinder frame can read
+                // under 5% CPU while the screen is plainly on and the user is taking a
+                // normal photo).
+                "isScreenOn" to pm.isInteractive))
         } catch (e: Exception) { result.error("FLAGS_ERROR", e.message, null) }
     }
 
@@ -1712,6 +1823,7 @@ class MainActivity : FlutterActivity() {
                 "activeDeviceAdminCount"      to userAdmins.size,
                 "isDeviceAdminActive"         to userAdmins.isNotEmpty(),
                 "activeDeviceAdmins"          to userAdmins.map { it.packageName },
+                "isScreenOn"                  to pwm.isInteractive,
             ))
         } catch (e: Exception) {
             result.error("DETAILED_FLAGS_ERROR", e.message, null)
@@ -1890,6 +2002,7 @@ class MainActivity : FlutterActivity() {
                 "packetCount" to c.packetCount,
                 "reconnectCount" to c.reconnectCount,
                 "isActive" to c.isActive,
+                "queriedDomain" to c.queriedDomain,
             )
         }
         result.success(list)

@@ -34,6 +34,12 @@ class ConnectionTracker(private val context: Context) {
         // isActive at read time (see snapshot()) also folds in recency, so this field alone is
         // not the full story.
         var isActive: Boolean = true,
+        // The domain a UDP:53 query on this exact flow was asking to resolve, if this flow IS a
+        // DNS query (DnsParser extracted it from the outbound packet) -- null for every other
+        // kind of connection, and for a DNS flow whose query didn't parse cleanly. This names
+        // *this* query's own target, not the subsequent connection(s) the answer led to -- there
+        // is no NAT-level correlation from a resolved IP back to the domain that resolved it.
+        var queriedDomain: String? = null,
     )
 
     private val connections = ConcurrentHashMap<String, Connection>()
@@ -52,6 +58,7 @@ class ConnectionTracker(private val context: Context) {
         remotePort: Int,
         bytesOut: Int,
         bytesIn: Int,
+        queriedDomain: String? = null,
     ) {
         val key = "$protocol:$localPort:$remoteAddress:$remotePort"
         val now = System.currentTimeMillis()
@@ -62,6 +69,7 @@ class ConnectionTracker(private val context: Context) {
             existing.bytesReceived += bytesIn
             existing.packetCount++
             existing.isActive = true
+            if (queriedDomain != null) existing.queriedDomain = queriedDomain
             return
         }
 
@@ -85,6 +93,7 @@ class ConnectionTracker(private val context: Context) {
             bytesReceived = bytesIn.toLong(),
             packetCount = 1,
             reconnectCount = reconnect,
+            queriedDomain = queriedDomain,
         )
     }
 

@@ -34,6 +34,11 @@ class _SensorScanScreenState extends State<SensorScanScreen> {
   bool _isCameraInUse = false;
   List<Map<String, dynamic>> _suspectApps = [];
 
+  bool _isScreenRecording = false;
+  List<String> _screenRecordSuspects = [];
+  int _clipboardSuspectCount = 0;
+  List<Map<String, dynamic>> _clipboardSuspects = [];
+
   List<_PermApp> _cameraApps = [];
   List<_PermApp> _micApps = [];
   List<_PermApp> _locationApps = [];
@@ -92,6 +97,21 @@ class _SensorScanScreenState extends State<SensorScanScreen> {
 
       debugPrint('SENSOR: mic=$_isMicInUse camera=$_isCameraInUse');
 
+      // Screen-recording and clipboard-access checks — same real device-state
+      // pattern as mic/camera above, not permission-holder guesses.
+      final recording = await _platform.isScreenRecordingActive();
+      _isScreenRecording = recording['isRecording'] as bool? ?? false;
+      _screenRecordSuspects = List<String>.from(
+        recording['suspectApps'] as List? ?? [],
+      );
+
+      final clipboard = await _platform.getClipboardInfo();
+      _clipboardSuspectCount = clipboard['suspectCount'] as int? ?? 0;
+      _clipboardSuspects = (clipboard['suspectApps'] as List? ?? [])
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+
       // Permission holders
       final rawApps = await _platform.getUserInstalledSensorApps();
       final cam = <_PermApp>[];
@@ -121,6 +141,7 @@ class _SensorScanScreenState extends State<SensorScanScreen> {
       mic.sort((a, b) => (b.recentFg ? 1 : 0).compareTo(a.recentFg ? 1 : 0));
       loc.sort((a, b) => (b.recentFg ? 1 : 0).compareTo(a.recentFg ? 1 : 0));
 
+      if (!mounted) return;
       setState(() {
         _cameraApps = cam;
         _micApps = mic;
@@ -129,6 +150,7 @@ class _SensorScanScreenState extends State<SensorScanScreen> {
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -269,7 +291,81 @@ class _SensorScanScreenState extends State<SensorScanScreen> {
             ],
           ),
 
+          const SizedBox(height: 14),
+
+          Row(
+            children: [
+              Expanded(
+                child: _BigStatusCard(
+                  icon: Icons.screen_share_rounded,
+                  label: 'SCREEN RECORD',
+                  isOn: _isScreenRecording,
+                  loading: _loading,
+                ),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: _BigStatusCard(
+                  icon: Icons.content_paste_rounded,
+                  label: 'CLIPBOARD RISK',
+                  isOn: _clipboardSuspectCount > 0,
+                  loading: _loading,
+                ),
+              ),
+            ],
+          ),
+
           const SizedBox(height: 20),
+
+          // ── Screen-recording suspects ─────────────────────────────────────
+          if (_isScreenRecording && _screenRecordSuspects.isNotEmpty) ...[
+            _sectionLabel(
+              Icons.screen_share_rounded,
+              'SCREEN RECORDER RUNNING',
+              AppTheme.alertRed,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'A screen-recording app or capability is active. If you didn\'t '
+              'start this yourself, it may be capturing everything on screen:',
+              style: AppTheme.bodyMedium.copyWith(
+                color: AppTheme.textMuted,
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ..._screenRecordSuspects.map((name) => _SimpleSuspectTile(name)),
+            const SizedBox(height: 20),
+          ],
+
+          // ── Clipboard suspects ────────────────────────────────────────────
+          if (_clipboardSuspects.isNotEmpty) ...[
+            _sectionLabel(
+              Icons.content_paste_rounded,
+              'CAN READ YOUR CLIPBOARD IN THE BACKGROUND',
+              AppTheme.neonYellow,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'These apps are running in the background and hold a capability '
+              '(input method or accessibility service) that can read clipboard '
+              'content — a common way to steal copied passwords or crypto '
+              'addresses. Holding the capability isn\'t proof of misuse, but '
+              'it\'s worth knowing who could:',
+              style: AppTheme.bodyMedium.copyWith(
+                color: AppTheme.textMuted,
+                fontSize: 11,
+              ),
+            ),
+            const SizedBox(height: 8),
+            ..._clipboardSuspects.map(
+              (a) => _SimpleSuspectTile(
+                a['appName'] as String? ?? a['packageName'] as String? ?? '',
+                subtitle: a['packageName'] as String?,
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
 
           // ── Suspect apps when hardware is active ─────────────────────────
           if ((_isMicInUse || _isCameraInUse) && _suspectApps.isNotEmpty) ...[
@@ -738,6 +834,61 @@ class _PermTile extends StatelessWidget {
                 ),
               ),
             ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Simple Suspect Tile (screen-record / clipboard sections) ───────────────
+
+class _SimpleSuspectTile extends StatelessWidget {
+  final String name;
+  final String? subtitle;
+  const _SimpleSuspectTile(this.name, {this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.backgroundCard,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.alertOrange.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            Icons.warning_amber_rounded,
+            size: 14,
+            color: AppTheme.alertOrange,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  name,
+                  style: AppTheme.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w600,
+                    color: AppTheme.textPrimary,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                if (subtitle != null)
+                  Text(
+                    subtitle!,
+                    style: AppTheme.bodyMedium.copyWith(
+                      color: AppTheme.textMuted,
+                      fontSize: 10,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+              ],
+            ),
+          ),
         ],
       ),
     );

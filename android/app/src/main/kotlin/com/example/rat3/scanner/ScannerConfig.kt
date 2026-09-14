@@ -59,6 +59,14 @@ object ScannerConfig {
         const val REPACKAGE_MISMATCH_POINTS = 70               // trusted package, wrong signer
         const val DEBUG_SIGNED_POINTS = 8                      // informational, common for sideloads
 
+        // A signature match only forces escalation (DecisionEngine's hardHit) when it's this
+        // confident -- several bundled signatures are weak, generic string matches (a SIM-
+        // country lookup, the standard SMS content:// URI, an anti-root-check many banking
+        // apps embed to REFUSE to run on rooted devices) that legitimate apps trip constantly.
+        // Below this weight, the signature still adds to the score, it just can't alone force
+        // a verdict past what the other three layers found.
+        const val SIGNATURE_HARD_HIT_MIN_WEIGHT = 50
+
         const val OBFUSCATION_BASE64_MIN_LEN = 400
         const val OBFUSCATION_BASE64_MIN_COUNT = 8
         const val OBFUSCATION_POINTS = 8

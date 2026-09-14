@@ -179,6 +179,14 @@ class RuntimeMonitor {
 
   // ── Real Check: Running Processes ──────────────────────────────────────────
 
+  // Honesty note: since Android 5.1 (API 21+), ActivityManager.getRunningAppProcesses()
+  // is restricted to the calling app's own process for a normal, non-system app — this
+  // is a platform limitation, not something a permission can unlock. In practice this
+  // list is just RAT3's own process(es), so backgroundProcs.length can never realistically
+  // exceed the threshold below; the rule is effectively inert on a real device rather than
+  // misleading (it will never falsely fire from other apps' activity, only never fire at
+  // all). Left in place rather than removed, in case a future Android version or device
+  // policy widens what's visible here.
   Future<List<RuntimeEvent>> _checkRunningProcesses() async {
     final events = <RuntimeEvent>[];
     try {
@@ -259,41 +267,28 @@ class RuntimeMonitor {
         events.add(event);
       }
 
-      if (usbDebugging) {
+      // USB debugging / developer options are deliberately NOT alerted on their own here
+      // -- they're ordinary, common settings for developers and power users, and a RAT's
+      // threat model is remote/network control, not local USB access. This mirrors the
+      // fix already made to the Dashboard's RuleBasedScorer (see its "rules that were
+      // deliberately removed or changed" doc section); this layer previously kept firing
+      // both standalone alerts independently, since it's a separate implementation that
+      // hadn't been updated to match. Only root + USB debugging together is worth naming.
+      if (isRooted && usbDebugging) {
         final event = _addEvent(
           type: RuntimeEventType.serviceRestart,
           value: 2,
-          details: 'USB debugging (ADB) is enabled in developer options',
+          details: 'Rooted device with USB debugging enabled',
         );
         _emitAlert(
           event: event,
-          severity: AlertSeverity.high,
-          title: 'USB Debugging Enabled',
+          severity: AlertSeverity.medium,
+          title: 'Rooted Device With USB Debugging Enabled',
           userMessage:
-              'USB debugging is currently active. This allows a computer '
-              'connected via USB to access your device internals. '
-              'Disable it unless you are actively developing.',
-          id: 'runtime_usb_debug',
+              'Together these meaningfully widen what anyone with physical access to '
+              'this device could do — on their own, neither is unusual for a developer.',
+          id: 'runtime_root_usb_debug',
           notify: false, // native scan already notifies for this condition
-        );
-        events.add(event);
-      }
-
-      if (developerOptions && !usbDebugging) {
-        // Developer options alone are lower risk but worth noting
-        final event = _addEvent(
-          type: RuntimeEventType.serviceRestart,
-          value: 3,
-          details: 'Developer options are enabled on this device',
-        );
-        _emitAlert(
-          event: event,
-          severity: AlertSeverity.low,
-          title: 'Developer Options Active',
-          userMessage:
-              'Developer options are enabled. While not directly dangerous, '
-              'they expose additional attack surfaces. Disable if not needed.',
-          id: 'runtime_dev_options',
         );
         events.add(event);
       }

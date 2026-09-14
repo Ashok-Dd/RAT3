@@ -11,6 +11,7 @@ import 'package:rat3/data/services/app_controller.dart';
 import 'package:rat3/features/apk_scan/apk_scan_landing.dart';
 import 'package:rat3/presentation/app_scan/app_scan_screen.dart';
 import 'package:rat3/presentation/sensors/sensor_scan_screen.dart';
+import 'package:rat3/presentation/trusted_apps/trusted_apps_screen.dart';
 import 'package:rat3/widgets/common_widgets.dart';
 
 enum _Mode { monitor, apk }
@@ -313,34 +314,56 @@ class _DeviceMonitorViewState extends State<_DeviceMonitorView>
   }
 
   Widget _deepScans() {
-    return Row(
+    return Column(
       children: [
-        Expanded(
-          child: _navCard(
-            'SENSOR SCAN',
-            'Camera, mic & location',
-            Icons.sensors,
-            () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const SensorScanScreen()),
+        Row(
+          children: [
+            Expanded(
+              child: _navCard(
+                'SENSOR SCAN',
+                'Camera, mic & location',
+                Icons.sensors,
+                () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const SensorScanScreen(),
+                  ),
+                ),
+              ),
             ),
-          ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _navCard(
+                'SCAN ALL APPS',
+                'Audit every installed app',
+                Icons.apps,
+                () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(builder: (_) => const AppScanScreen()),
+                ),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _navCard(
-            'SCAN ALL APPS',
-            'Audit every installed app',
-            Icons.apps,
-            () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const AppScanScreen()),
-            ),
+        const SizedBox(height: 12),
+        _navCard(
+          'TRUSTED APPS',
+          'Toggle which apps RAT3 skips scanning',
+          Icons.verified_user_outlined,
+          () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const TrustedAppsScreen()),
           ),
+          fullWidth: true,
         ),
       ],
     );
   }
 
-  Widget _navCard(String label, String sub, IconData icon, VoidCallback onTap) {
+  Widget _navCard(
+    String label,
+    String sub,
+    IconData icon,
+    VoidCallback onTap, {
+    bool fullWidth = false,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -350,22 +373,54 @@ class _DeviceMonitorViewState extends State<_DeviceMonitorView>
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: AppTheme.neonCyan.withValues(alpha: 0.5)),
         ),
-        child: Column(
-          children: [
-            Icon(icon, color: AppTheme.neonCyan, size: 26),
-            const SizedBox(height: 8),
-            Text(
-              label,
-              style: AppTheme.labelSmall.copyWith(
-                color: AppTheme.neonCyan,
-                fontWeight: FontWeight.w800,
+        child: fullWidth
+            ? Row(
+                children: [
+                  Icon(icon, color: AppTheme.neonCyan, size: 26),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label,
+                          style: AppTheme.labelSmall.copyWith(
+                            color: AppTheme.neonCyan,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(sub, style: AppTheme.labelSmall),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right,
+                    color: AppTheme.neonCyan,
+                    size: 20,
+                  ),
+                ],
+              )
+            : Column(
+                children: [
+                  Icon(icon, color: AppTheme.neonCyan, size: 26),
+                  const SizedBox(height: 8),
+                  Text(
+                    label,
+                    style: AppTheme.labelSmall.copyWith(
+                      color: AppTheme.neonCyan,
+                      fontWeight: FontWeight.w800,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    sub,
+                    style: AppTheme.labelSmall,
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 2),
-            Text(sub, style: AppTheme.labelSmall, textAlign: TextAlign.center),
-          ],
-        ),
       ),
     );
   }

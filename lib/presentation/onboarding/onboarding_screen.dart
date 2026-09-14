@@ -48,13 +48,20 @@ class _OnboardingScreenState extends State<OnboardingScreen>
   Future<void> _refresh() async {
     final flags = await _platform.getSecurityFlags();
     final notif = await Permission.notification.status;
+    // The tile this drives claims to cover camera/mic/location together ("Detect when
+    // another app secretly uses your sensors") but used to track only camera's grant
+    // state -- a user could deny microphone (a common outcome, since the three system
+    // prompts fire sequentially) and still see a green "granted" checkmark implying full
+    // sensor coverage was authorized. Now requires all three actually granted.
     final cam = await Permission.camera.status;
+    final mic = await Permission.microphone.status;
+    final loc = await Permission.location.status;
     if (!mounted) return;
     setState(() {
       _notifications = notif.isGranted;
       _usageAccess = flags['hasUsageStatsPermission'] == true;
       _batteryExempt = flags['isIgnoringBatteryOptimizations'] == true;
-      _sensors = cam.isGranted;
+      _sensors = cam.isGranted && mic.isGranted && loc.isGranted;
     });
   }
 

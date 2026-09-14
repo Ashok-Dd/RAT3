@@ -46,6 +46,18 @@ class Layer3SignatureScannerTest {
     }
 
     @Test
+    fun `a weak generic signature match scores but does not force a hard hit`() {
+        // "getSimCountryIso" is RAT3-005 (riskWeight 20, well under
+        // SIGNATURE_HARD_HIT_MIN_WEIGHT) -- a SIM-country lookup used by countless
+        // legitimate apps for phone-number formatting, not a distinctive malware marker.
+        val r = analyze(fakeApkContext(scanText = "...getSimCountryIso()..."))
+        val rawData = r.getJSONObject("rawData")
+        assertEquals("BankBot", rawData.getString("matchedFamily"))
+        assertFalse(rawData.getBoolean("hardHit"))
+        assertEquals(20, r.getInt("riskScore"))
+    }
+
+    @Test
     fun `debug-signed apk adds fixed points and a finding, no hard hit`() {
         val r = analyze(fakeApkContext(isDebugSigned = true))
         assertEquals(Cfg.DEBUG_SIGNED_POINTS, r.getInt("riskScore"))

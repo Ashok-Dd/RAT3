@@ -116,7 +116,10 @@ class AppScannerService {
     } catch (e, st) {
       AppLogger.error(_tag, 'runFullScan failed', e, st);
       _emit(1.0, 'Scan failed: ${e.toString()}');
-      return AppScanResult.empty();
+      // Let the caller (AppScanScreen) see the real failure and show its error
+      // view — silently returning an empty-but-"successful" result made a
+      // genuine scan failure indistinguishable from "0 apps on this device".
+      rethrow;
     } finally {
       _isScanning = false;
     }

@@ -9,7 +9,6 @@
     <!-- ── Post-installation device monitor ─────────────────────────────── -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
@@ -19,6 +18,12 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <!-- RAT3 never actually records audio itself; this is held purely because Android's
+         AudioManager.getActiveRecordingConfigurations() anonymizes every other app's client
+         UID (returning it as the caller's own UID instead of the real one) unless the CALLER
+         holds RECORD_AUDIO. Without this, "which app is using the microphone right now" is
+         structurally impossible to detect, not just imprecise. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- Device-wide monitoring needs to enumerate other apps. Not Play-Store friendly;
          this build targets sideload / enterprise use. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"

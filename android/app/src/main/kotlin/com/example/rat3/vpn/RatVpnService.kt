@@ -71,6 +71,17 @@ class RatVpnService : VpnService() {
             .addRoute("0.0.0.0", 0)
             .addDnsServer("8.8.8.8")
             .addDnsServer("8.8.4.4")
+            // IPv6 side of the tun -- a ULA address (fd00::/8, RFC 4193), not a real global
+            // address, purely so Android has something to assign the interface. Routing the
+            // full ::/0 default route through it is what actually makes the device's real
+            // IPv6 traffic (if the network path uses it) visible to this relay instead of
+            // silently bypassing it. Unlike the IPv4 path above -- tested against real heavy
+            // browsing -- this side has not been verified against real IPv6 network traffic
+            // on a physical device; see IpPacket's class doc comment for the parsing scope
+            // limit that goes with it.
+            .addAddress("fd00:1:fd00::2", 128)
+            .addRoute("::", 0)
+            .addDnsServer("2001:4860:4860::8888")
             .setMtu(MTU)
             // Never route our own traffic through the tun -- avoids a self-loop where RAT3's
             // own protected relay sockets would otherwise get captured and re-relayed.
@@ -128,7 +139,9 @@ class RatVpnService : VpnService() {
 
     private fun dispatch(raw: ByteArray, length: Int) {
         val buf = ByteBuffer.wrap(raw, 0, length)
-        val ip = IpPacket.parseIpv4(buf, length) ?: return // IPv6 or malformed -- skip, don't crash
+        val ip: IpPacket.IpHeader = IpPacket.parseIpv4(buf, length)
+            ?: IpPacket.parseIpv6(buf, length)
+            ?: return // malformed, or a version/shape this relay doesn't support -- skip, don't crash
         when (ip.protocol) {
             IpPacket.PROTOCOL_TCP -> {
                 val tcp = IpPacket.parseTcp(buf, ip.payloadOffset, length) ?: return

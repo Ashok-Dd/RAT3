@@ -66,9 +66,18 @@ class DeviceFeatures {
   // ═══════════════════════════════════════════════════════════════
 
   final int totalUserInstalledApps;
-  final int nonPlayStoreAppCount; // sideloaded / unknown installer
+  final int nonPlayStoreAppCount; // sideloaded / unknown installer -- informational only,
+  // see flaggedAppCount below for what actually drives the score
   final int recentlyInstalledAppCount; // installed in last 7 days
-  final int unknownInstallerAppCount;
+  final int unknownInstallerAppCount; // informational only, same reason
+  // Apps the App Trust Engine's own evidence ladder already flagged NEEDS_REVIEW or worse --
+  // i.e. sideloaded/unknown-installer AND showing some other concerning signal, not sideloaded
+  // status alone. This is what the App Behavior score actually uses: a developer's own dozen
+  // sideloaded test builds, or a device shipped with a dozen OEM-bundled apps, are not
+  // evidence of a RAT by themselves (see AppTrustEngine's TRUSTED-baseline / evidence-ladder
+  // docs) -- scoring the raw count punished exactly the false positives that engine exists
+  // to avoid, just from the Dashboard side instead of the per-app side.
+  final int flaggedAppCount;
   final int appsTargetingOldSdkCount; // targetSdk < 26 (pre-Oreo)
   final int appsWithAccessibilityCount;
   final int appsRunningInBgCount;
@@ -85,6 +94,7 @@ class DeviceFeatures {
   final bool developerOptionsEnabled;
   final bool usbDebuggingEnabled;
   final bool unknownSourcesEnabled; // install from unknown sources
+  final bool verifyAppsDisabled; // Play Protect app-verification turned off
   final int batteryOptDisabledAppsCount; // apps ignoring battery optimization
   final double cpuUsagePercent; // current real CPU %
   final double cpuUsageWhenScreenOff; // approximated from idle readings
@@ -159,6 +169,7 @@ class DeviceFeatures {
     required this.nonPlayStoreAppCount,
     required this.recentlyInstalledAppCount,
     required this.unknownInstallerAppCount,
+    required this.flaggedAppCount,
     required this.appsTargetingOldSdkCount,
     required this.appsWithAccessibilityCount,
     required this.appsRunningInBgCount,
@@ -171,6 +182,7 @@ class DeviceFeatures {
     required this.developerOptionsEnabled,
     required this.usbDebuggingEnabled,
     required this.unknownSourcesEnabled,
+    required this.verifyAppsDisabled,
     required this.batteryOptDisabledAppsCount,
     required this.cpuUsagePercent,
     required this.cpuUsageWhenScreenOff,
@@ -233,6 +245,7 @@ class DeviceFeatures {
     nonPlayStoreAppCount: 0,
     recentlyInstalledAppCount: 0,
     unknownInstallerAppCount: 0,
+    flaggedAppCount: 0,
     appsTargetingOldSdkCount: 0,
     appsWithAccessibilityCount: 0,
     appsRunningInBgCount: 0,
@@ -244,6 +257,7 @@ class DeviceFeatures {
     developerOptionsEnabled: false,
     usbDebuggingEnabled: false,
     unknownSourcesEnabled: false,
+    verifyAppsDisabled: false,
     batteryOptDisabledAppsCount: 0,
     cpuUsagePercent: 0,
     cpuUsageWhenScreenOff: 0,
@@ -306,6 +320,7 @@ class DeviceFeatures {
     int? nonPlayStoreAppCount,
     int? recentlyInstalledAppCount,
     int? unknownInstallerAppCount,
+    int? flaggedAppCount,
     int? appsTargetingOldSdkCount,
     int? appsWithAccessibilityCount,
     int? appsRunningInBgCount,
@@ -317,6 +332,7 @@ class DeviceFeatures {
     bool? developerOptionsEnabled,
     bool? usbDebuggingEnabled,
     bool? unknownSourcesEnabled,
+    bool? verifyAppsDisabled,
     int? batteryOptDisabledAppsCount,
     double? cpuUsagePercent,
     double? cpuUsageWhenScreenOff,
@@ -392,6 +408,7 @@ class DeviceFeatures {
         recentlyInstalledAppCount ?? this.recentlyInstalledAppCount,
     unknownInstallerAppCount:
         unknownInstallerAppCount ?? this.unknownInstallerAppCount,
+    flaggedAppCount: flaggedAppCount ?? this.flaggedAppCount,
     appsTargetingOldSdkCount:
         appsTargetingOldSdkCount ?? this.appsTargetingOldSdkCount,
     appsWithAccessibilityCount:
@@ -410,6 +427,7 @@ class DeviceFeatures {
         developerOptionsEnabled ?? this.developerOptionsEnabled,
     usbDebuggingEnabled: usbDebuggingEnabled ?? this.usbDebuggingEnabled,
     unknownSourcesEnabled: unknownSourcesEnabled ?? this.unknownSourcesEnabled,
+    verifyAppsDisabled: verifyAppsDisabled ?? this.verifyAppsDisabled,
     batteryOptDisabledAppsCount:
         batteryOptDisabledAppsCount ?? this.batteryOptDisabledAppsCount,
     cpuUsagePercent: cpuUsagePercent ?? this.cpuUsagePercent,
@@ -453,7 +471,7 @@ class DeviceFeatures {
   String get summary =>
       'cam=$cameraActiveNow mic=$micActiveNow '
       'root=$rootDetected usbDbg=$usbDebuggingEnabled '
-      'sideloaded=$nonPlayStoreAppCount '
+      'sideloaded=$nonPlayStoreAppCount flagged=$flaggedAppCount '
       'malicious=$maliciousConnectionCount suspicious=$suspiciousConnectionCount '
       'cpu=${cpuUsagePercent.toStringAsFixed(1)}% '
       'bgData=${bgDataSentMb.toStringAsFixed(2)}MB';

@@ -137,6 +137,11 @@ class ConnectionEvidence {
   final bool isActive;
   final ConnectionAssessment assessment;
   final List<String> reasons;
+  // The domain this exact flow's own DNS query was asking to resolve, when this
+  // connection IS a DNS query RAT3 could parse — null for every other connection.
+  // Not a resolved-IP-to-domain correlation; see ConnectionTracker.Connection's
+  // doc comment on the Kotlin side for why that's out of scope.
+  final String? queriedDomain;
 
   const ConnectionEvidence({
     required this.protocol,
@@ -153,6 +158,7 @@ class ConnectionEvidence {
     required this.isActive,
     required this.assessment,
     required this.reasons,
+    this.queriedDomain,
   });
 
   Duration get duration => lastSeen.difference(firstSeen);
@@ -183,6 +189,7 @@ class ConnectionEvidence {
       // pass, not the raw platform-channel map.
       assessment: ConnectionAssessment.normal,
       reasons: const [],
+      queriedDomain: m['queriedDomain'] as String?,
     );
   }
 
@@ -204,6 +211,7 @@ class ConnectionEvidence {
     isActive: isActive,
     assessment: assessment ?? this.assessment,
     reasons: reasons ?? this.reasons,
+    queriedDomain: queriedDomain,
   );
 }
 

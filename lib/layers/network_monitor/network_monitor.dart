@@ -118,6 +118,9 @@ class NetworkMonitor {
           'com.google.android.gapps',
           'com.google.android.syncadapters',
           'com.google.android.partnersetup',
+          'com.google.android.inputmethod.latin', // Gboard -- syncs dictionary/clipboard data
+          // in the background as part of normal operation; found live flagging as
+          // "Suspicious Active Upload" for a routine 2.1MB sync.
         ];
         for (final s in skip) {
           if (pkg.startsWith(s) || pkg == s.replaceAll('.', '')) return true;
@@ -138,9 +141,16 @@ class NetworkMonitor {
         // Skip apps with no meaningful traffic (< 1 KB)
         if (txBytes < 1024 && rxBytes < 1024) continue;
 
-        // Detect ACTIVE upload: compare with previous snapshot
+        // Detect ACTIVE upload: compare with previous snapshot. The first time this
+        // app is seen (no prior snapshot -- e.g. right after RAT3 itself restarts) must
+        // score a delta of 0, not txBytes-vs-0: txBytes is a 30-day cumulative total (see
+        // getAppNetworkUsage's doc comment), so treating a missing baseline as "0 before"
+        // makes a heavily-used app's ENTIRE monthly total look like a burst that just
+        // happened. Found live: "Free Fire MAX" showing a 245.6MB "active upload right
+        // now" immediately after a fresh install, which was really its 30-day total.
+        final hasPriorReading = _previousTxSnapshot.containsKey(pkgName);
         final prevTx = _previousTxSnapshot[pkgName] ?? 0;
-        final deltaTx = txBytes - prevTx;
+        final deltaTx = hasPriorReading ? (txBytes - prevTx) : 0;
         final isActivelyUploading =
             deltaTx > 50 * 1024; // 50KB+ new since last check
         _previousTxSnapshot[pkgName] = txBytes;
@@ -148,7 +158,6 @@ class NetworkMonitor {
         // Classify based on upload behavior and known signals
         final category = _classifyApp(
           pkgName: pkgName,
-          txBytes: txBytes,
           deltaTx: deltaTx,
           isActivelyUploading: isActivelyUploading,
         );
@@ -236,7 +245,6 @@ class NetworkMonitor {
 
   TrafficCategory _classifyApp({
     required String pkgName,
-    required int txBytes,
     required int deltaTx,
     required bool isActivelyUploading,
   }) {
@@ -246,8 +254,10 @@ class NetworkMonitor {
     }
     if (isActivelyUploading) return TrafficCategory.suspicious;
 
-    // High total TX (> 10MB) from a non-system app → suspicious
-    if (txBytes > 10 * 1024 * 1024) return TrafficCategory.suspicious;
+    // High TX *since the last poll* (not lifetime total -- txBytes from
+    // getAppNetworkUsage() is a 30-day whole-device total; treating that as "suspicious"
+    // would flag nearly every app with any real usage history, forever) → suspicious.
+    if (deltaTx > 10 * 1024 * 1024) return TrafficCategory.suspicious;
 
     return TrafficCategory.safe;
   }
@@ -294,16 +304,17 @@ class NetworkMonitor {
             '(${AppFormatter.formatBytes(deltaTx)} uploaded recently). '
             'If you are not actively using this app, this is suspicious.',
       );
-    } else if (conn.bytesSent > 10 * 1024 * 1024) {
+    } else if (deltaTx > 10 * 1024 * 1024) {
+      // deltaTx (new bytes since the last ~20s poll), not conn.bytesSent (a 30-day
+      // whole-device total from getAppNetworkUsage()) -- see _classifyApp's doc comment.
       _emit(
-        id: 'net_highdata_${conn.ipAddress}',
+        id: 'net_highdata_${conn.ipAddress}_${DateTime.now().minute}',
         severity: AlertSeverity.medium,
         title: 'High Data Usage',
-        description:
-            '"$appName" has sent ${AppFormatter.formatBytes(conn.bytesSent)}',
+        description: '"$appName" sent ${AppFormatter.formatBytes(deltaTx)} just now',
         userMessage:
-            '"$appName" has sent a large amount of data '
-            '(${AppFormatter.formatBytes(conn.bytesSent)}). '
+            '"$appName" just sent a large amount of data in a short time '
+            '(${AppFormatter.formatBytes(deltaTx)}). '
             'Review if this matches your expected app activity.',
       );
     }
@@ -333,15 +344,22 @@ class NetworkMonitor {
   bool _isSuspiciousPort(int port) => _suspiciousPorts.contains(port);
   bool _isLoopback(String ip) =>
       ip.startsWith('127.') || ip == '::1' || ip == '0.0.0.0';
-  bool _isPrivateIp(String ip) =>
-      ip.startsWith('10.') ||
-      ip.startsWith('192.168.') ||
-      ip.startsWith('172.16.') ||
-      ip.startsWith('172.17.') ||
-      ip.startsWith('172.18.') ||
-      ip.startsWith('172.19.') ||
-      ip.startsWith('172.2') ||
-      ip.startsWith('172.3');
+  // RFC1918's 172.16.0.0/12 range is second-octet 16-31 -- a STRING prefix of "172.2" or
+  // "172.3" also matches public, routable addresses (172.2.x.x, 172.3.x.x, and
+  // 172.32.x.x-172.39.x.x), which used to be silently treated as "private" and skipped
+  // from malicious/suspicious classification entirely before it ever ran. Parses the
+  // actual second octet as a number instead of string-matching it.
+  bool _isPrivateIp(String ip) {
+    if (ip.startsWith('10.') || ip.startsWith('192.168.')) return true;
+    if (ip.startsWith('172.')) {
+      final parts = ip.split('.');
+      if (parts.length >= 2) {
+        final second = int.tryParse(parts[1]);
+        if (second != null && second >= 16 && second <= 31) return true;
+      }
+    }
+    return false;
+  }
   bool _isKnownSafeBlock(String ip) =>
       ip.startsWith('142.250.') ||
       ip.startsWith('172.217.') ||

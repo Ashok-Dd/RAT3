@@ -27,6 +27,13 @@ class AppTrustEngineTest {
         hasNotificationAccess: Boolean = false,
         blocklistHit: Boolean = false,
         userMarkedTrusted: Boolean = false,
+        canInstallPackages: Boolean = false,
+        canDeletePackages: Boolean = false,
+        hasStorageAccess: Boolean = false,
+        hasSentNetworkData: Boolean = false,
+        hasContactsAccess: Boolean = false,
+        hasCallLogAccess: Boolean = false,
+        hasNoLauncherIcon: Boolean = false,
     ) = AppTrustEngine.AppFacts(
         installSource = installSource,
         installDaysAgo = installDaysAgo,
@@ -41,6 +48,13 @@ class AppTrustEngineTest {
         hasNotificationAccess = hasNotificationAccess,
         blocklistHit = blocklistHit,
         userMarkedTrusted = userMarkedTrusted,
+        canInstallPackages = canInstallPackages,
+        canDeletePackages = canDeletePackages,
+        hasStorageAccess = hasStorageAccess,
+        hasSentNetworkData = hasSentNetworkData,
+        hasContactsAccess = hasContactsAccess,
+        hasCallLogAccess = hasCallLogAccess,
+        hasNoLauncherIcon = hasNoLauncherIcon,
     )
 
     // ── The exact reported false positives ──────────────────────────────────
@@ -262,5 +276,90 @@ class AppTrustEngineTest {
         // Calm, informational -- shown regardless of trust level -- but not evidence.
         assertTrue(a.privateDataAccess.any { it.contains("SMS") })
         assertTrue(a.evidence.isEmpty())
+    }
+
+    // ── New weak/medium signals (silent install/uninstall, contacts, call log, file-exfil
+    // correlation, hidden launcher icon) ────────────────────────────────────
+
+    @Test
+    fun `REQUEST_INSTALL_PACKAGES alone on an untrusted app is only weak evidence, not escalating`() {
+        val a = AppTrustEngine.assess(
+            trustedFacts(installSource = "sideloaded", canInstallPackages = true),
+        )
+        assertEquals("NEEDS_REVIEW", a.trustLevel) // 2 weak signals: sideloaded + this
+        assertTrue(a.evidence.any { it.contains("install other apps") })
+    }
+
+    @Test
+    fun `REQUEST_INSTALL_PACKAGES is never evidence for a trusted app`() {
+        val a = AppTrustEngine.assess(trustedFacts(canInstallPackages = true))
+        assertEquals("TRUSTED", a.trustLevel)
+        assertTrue(a.evidence.isEmpty())
+    }
+
+    @Test
+    fun `REQUEST_DELETE_PACKAGES alone on an untrusted app is weak evidence`() {
+        val a = AppTrustEngine.assess(
+            trustedFacts(installSource = "sideloaded", canDeletePackages = true),
+        )
+        assertTrue(a.evidence.any { it.contains("uninstall") })
+    }
+
+    @Test
+    fun `contacts access is named explicitly, like SMS`() {
+        val a = AppTrustEngine.assess(
+            trustedFacts(installSource = "sideloaded", hasContactsAccess = true),
+        )
+        assertEquals("NEEDS_REVIEW", a.trustLevel)
+        assertTrue(a.evidence.any { it.contains("contacts") })
+        assertTrue(a.privateDataAccess.any { it.contains("contacts") })
+    }
+
+    @Test
+    fun `call log access is named explicitly, like SMS`() {
+        val a = AppTrustEngine.assess(
+            trustedFacts(installSource = "sideloaded", hasCallLogAccess = true),
+        )
+        assertEquals("NEEDS_REVIEW", a.trustLevel)
+        assertTrue(a.evidence.any { it.contains("call log") })
+    }
+
+    @Test
+    fun `storage access alone, with no network activity, is not evidence`() {
+        val a = AppTrustEngine.assess(
+            trustedFacts(installSource = "sideloaded", hasStorageAccess = true),
+        )
+        // Only the "sideloaded" weak signal -- storage access alone never contributes.
+        assertEquals("UNKNOWN", a.trustLevel)
+    }
+
+    @Test
+    fun `storage access combined with sent network data is the file-exfiltration correlation`() {
+        val a = AppTrustEngine.assess(
+            trustedFacts(
+                installSource = "sideloaded",
+                hasStorageAccess = true,
+                hasSentNetworkData = true,
+            ),
+        )
+        assertEquals("NEEDS_REVIEW", a.trustLevel)
+        assertTrue(a.evidence.any { it.contains("files") && it.contains("network") })
+    }
+
+    @Test
+    fun `no launcher icon alone on an untrusted app is weak evidence`() {
+        val a = AppTrustEngine.assess(
+            trustedFacts(installSource = "sideloaded", hasNoLauncherIcon = true),
+        )
+        assertEquals("NEEDS_REVIEW", a.trustLevel)
+        assertTrue(a.evidence.any { it.contains("no visible icon") })
+    }
+
+    @Test
+    fun `accessibility evidence names keylogging explicitly, matching the pre-install scanner`() {
+        val a = AppTrustEngine.assess(
+            trustedFacts(installSource = "sideloaded", hasAccessibility = true, hasBootPersistence = true),
+        )
+        assertTrue(a.evidence.any { it.contains("keylogging") })
     }
 }

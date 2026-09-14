@@ -5,6 +5,7 @@ import 'package:rat3/data/models/app_models.dart';
 import 'package:rat3/data/services/platform_channel_service.dart';
 import 'package:rat3/data/services/storage_service.dart';
 import 'package:rat3/layers/alert_engine/alert_engine.dart';
+import 'package:rat3/layers/connection_monitor/connection_monitor.dart';
 import 'package:rat3/layers/feature_engine/device_features.dart';
 import 'package:rat3/layers/feature_engine/feature_collector.dart';
 import 'package:rat3/layers/feature_engine/rule_based_scorer.dart';
@@ -50,6 +51,7 @@ class RiskEngine {
   RiskEngine({
     required PlatformChannelService platform,
     required NetworkMonitor networkMonitor,
+    required ConnectionMonitor connectionMonitor,
     required StorageService storageService,
     required AlertEngine alertEngine,
   }) : _platform = platform,
@@ -59,6 +61,7 @@ class RiskEngine {
     _collector = FeatureCollector(
       platform: platform,
       networkMonitor: networkMonitor,
+      connectionMonitor: connectionMonitor,
     );
   }
 

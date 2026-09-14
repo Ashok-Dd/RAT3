@@ -100,7 +100,7 @@ class _AppScanScreenState extends State<AppScanScreen>
       });
       // Surface the per-app findings in the shared Alerts tab.
       final controller = context.read<AppController>();
-      controller.alertEngine.injectAppScanAlerts(result.alerts);
+      await controller.alertEngine.injectAppScanAlerts(result.alerts);
       // Let the Connection Monitor correlate a connection with an app this
       // scan already flagged, instead of judging network activity alone.
       controller.updateUntrustedPackages([

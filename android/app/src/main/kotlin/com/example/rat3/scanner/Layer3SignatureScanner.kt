@@ -45,7 +45,11 @@ class Layer3SignatureScanner(
             if (sig.matches(ctx.scanText)) {
                 score += sig.riskWeight
                 matchedFamily = sig.family
-                hardHit = true
+                // Only a confident, distinctive match (a named malware family's own marker)
+                // forces escalation. A weak/generic string match still scores -- it just
+                // can't alone force MALICIOUS the way an actual family marker or blocklist
+                // hit can.
+                if (sig.riskWeight >= Cfg.SIGNATURE_HARD_HIT_MIN_WEIGHT) hardHit = true
                 findings += finding(
                     "Signature ${sig.id}: ${sig.name} — family ${sig.family}.",
                     isWarning = true,

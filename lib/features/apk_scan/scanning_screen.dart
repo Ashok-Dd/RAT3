@@ -50,7 +50,7 @@ class _ApkScanningScreenState extends State<ApkScanningScreen> {
     ),
     _Layer(
       name: 'ML Malware Classifier',
-      description: 'Running the 5-model ensemble…',
+      description: 'Running the 4-model ensemble…',
       icon: Icons.psychology,
     ),
   ];

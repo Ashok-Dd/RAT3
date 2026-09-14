@@ -86,14 +86,13 @@ class AlertEngine {
 
   /// Inject a batch of alerts from app scanner.
   /// Removes previous app-scanner alerts first to avoid stale duplicates.
-  void injectAppScanAlerts(List<AlertEvent> alerts) {
-    // Remove all old app scan alerts before inserting new ones
-    _alerts.removeWhere((a) => a.source == 'App Scanner');
-
-    // Clear app scan IDs from seenIds so new scan results always show
-    _seenIds.removeWhere(
-      (id) => id.startsWith('appscan_') || id.startsWith('appscan_'),
-    );
+  Future<void> injectAppScanAlerts(List<AlertEvent> alerts) async {
+    // Reuses resetForNewScan's clearing (alerts + seenIds + title-cooldown) instead of a
+    // second, partial copy of it -- the previous version cleared alerts/seenIds here but
+    // never cleared _titleLastSeen, so running "Scan All Apps" twice within the same
+    // severity's cooldown window (20min for high, 30min for critical) silently suppressed
+    // the second run's genuinely fresh findings for any app with the same alert title.
+    await resetForNewScan();
 
     // Inject each new alert through normal dedup pipeline
     for (final alert in alerts) {

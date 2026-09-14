@@ -49,7 +49,7 @@ class TcpRelay(
     private fun key(srcPort: Int, destAddr: ByteArray, destPort: Int) =
         "$srcPort:${IpPacket.addressToString(destAddr)}:$destPort"
 
-    fun onPacket(ip: IpPacket.Ipv4Header, tcp: IpPacket.TcpHeader, buf: ByteBuffer, totalLength: Int) {
+    fun onPacket(ip: IpPacket.IpHeader, tcp: IpPacket.TcpHeader, buf: ByteBuffer, totalLength: Int) {
         val k = key(tcp.sourcePort, ip.destAddress, tcp.destPort)
         val payloadLen = totalLength - tcp.payloadOffset
 
@@ -121,7 +121,7 @@ class TcpRelay(
         }
     }
 
-    private fun openFlow(k: String, ip: IpPacket.Ipv4Header, tcp: IpPacket.TcpHeader) {
+    private fun openFlow(k: String, ip: IpPacket.IpHeader, tcp: IpPacket.TcpHeader) {
         val channel = try {
             SocketChannel.open().apply {
                 vpnService.protect(socket())

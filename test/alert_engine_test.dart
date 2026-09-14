@@ -102,12 +102,12 @@ void main() {
     });
 
     test('injectAppScanAlerts replaces the previous app-scan batch', () async {
-      engine.injectAppScanAlerts([
+      await engine.injectAppScanAlerts([
         _alert(id: 'appscan_1', source: 'App Scanner', title: 'First'),
       ]);
       expect(engine.allAlerts.length, 1);
 
-      engine.injectAppScanAlerts([
+      await engine.injectAppScanAlerts([
         _alert(id: 'appscan_2', source: 'App Scanner', title: 'Second'),
       ]);
       expect(engine.allAlerts.length, 1);

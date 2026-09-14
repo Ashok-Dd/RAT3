@@ -26,39 +26,80 @@ void main() {
       expect(result.composite, greaterThan(0));
     });
 
-    test('USB debugging alone triggers a high rule, not critical', () {
-      final result = scorer.score(clean.copyWith(usbDebuggingEnabled: true));
-      final hit = result.triggeredRules.singleWhere(
-        (h) => h.title == 'USB debugging (ADB) is enabled',
+    test(
+      'USB debugging alone triggers nothing -- a developer/poweruser setting, not risk',
+      () {
+        final result = scorer.score(
+          clean.copyWith(usbDebuggingEnabled: true),
+        );
+        expect(result.triggeredRules, isEmpty);
+        expect(result.systemScore, 0);
+      },
+    );
+
+    test('developer options alone triggers nothing', () {
+      final result = scorer.score(
+        clean.copyWith(developerOptionsEnabled: true),
       );
-      expect(hit.severity, AlertSeverity.high);
+      expect(result.triggeredRules, isEmpty);
+      expect(result.systemScore, 0);
     });
 
     test(
-      'developer options only registers when USB debugging is not also on',
+      'root + USB debugging together is named specifically, beyond root alone',
       () {
-        final withDevOptsOnly = scorer.score(
-          clean.copyWith(developerOptionsEnabled: true),
+        final rootOnly = scorer.score(clean.copyWith(rootDetected: true));
+        final rootAndUsb = scorer.score(
+          clean.copyWith(rootDetected: true, usbDebuggingEnabled: true),
         );
         expect(
-          withDevOptsOnly.triggeredRules.any(
-            (h) => h.title == 'Developer options are enabled',
+          rootAndUsb.triggeredRules.any(
+            (h) => h.title == 'Rooted device with USB debugging enabled',
           ),
           isTrue,
         );
+        expect(rootAndUsb.systemScore, greaterThan(rootOnly.systemScore));
+      },
+    );
 
-        final withBoth = scorer.score(
-          clean.copyWith(
-            developerOptionsEnabled: true,
-            usbDebuggingEnabled: true,
-          ),
+    test(
+      'unknown sources alone triggers nothing -- only matters with a flagged app present',
+      () {
+        final alone = scorer.score(
+          clean.copyWith(unknownSourcesEnabled: true),
         );
-        expect(
-          withBoth.triggeredRules.any(
-            (h) => h.title == 'Developer options are enabled',
-          ),
-          isFalse,
+        expect(alone.triggeredRules, isEmpty);
+
+        final withFlaggedApp = scorer.score(
+          clean.copyWith(unknownSourcesEnabled: true, flaggedAppCount: 1),
         );
+        expect(withFlaggedApp.triggeredRules, isNotEmpty);
+      },
+    );
+  });
+
+  group('app behavior', () {
+    test(
+      'a pile of sideloaded apps with nothing else notable scores nothing -- '
+      'the App Trust Engine already cleared them',
+      () {
+        // e.g. a device shipped with a dozen OEM-bundled apps, or a developer with a
+        // dozen of their own sideloaded test builds -- neither is evidence of a RAT.
+        final result = scorer.score(
+          clean.copyWith(nonPlayStoreAppCount: 12, unknownInstallerAppCount: 12),
+        );
+        expect(result.triggeredRules, isEmpty);
+        expect(result.appScore, 0);
+      },
+    );
+
+    test(
+      'apps the App Trust Engine actually flagged do score, scaling with count',
+      () {
+        final one = scorer.score(clean.copyWith(flaggedAppCount: 1));
+        final three = scorer.score(clean.copyWith(flaggedAppCount: 3));
+        expect(one.triggeredRules, isNotEmpty);
+        expect(three.appScore, greaterThan(one.appScore));
       },
     );
   });
@@ -190,6 +231,7 @@ void main() {
         dataSentWhenCameraActive: true,
         nonPlayStoreAppCount: 5,
         unknownInstallerAppCount: 5,
+        flaggedAppCount: 5,
         recentlyInstalledAppCount: 5,
         frequentInstallUninstallPattern: true,
         appsWithAccessibilityCount: 3,

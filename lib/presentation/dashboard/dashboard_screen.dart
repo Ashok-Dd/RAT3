@@ -242,6 +242,11 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
+  // The six weighted categories behind the overall score, in descending
+  // weight order (Sensor/Network 25%, App 20%, System 15%, Permission 10%,
+  // Aggregated 5% — see docs/post-installation/07-risk-scoring-engine.md).
+  // All six must be shown here, not a subset — each bar is 5-25% of the
+  // score, so omitting any of them hides that much of "why" from the user.
   Widget _buildContributionBreakdown(RiskScore score) {
     return CyberCard(
       child: Column(
@@ -250,21 +255,39 @@ class DashboardScreen extends StatelessWidget {
           const SectionHeader(title: 'Risk Breakdown'),
           const SizedBox(height: 16),
           _buildContribRow(
-            'Runtime Behavior',
-            score.runtimeContribution,
-            AppTheme.neonCyan,
+            'Sensor Behavior',
+            score.sensorContribution,
+            AppTheme.neonGreen,
           ),
           const SizedBox(height: 10),
           _buildContribRow(
-            'Network Traffic',
+            'Network & Resource',
             score.networkContribution,
             AppTheme.neonOrange,
           ),
           const SizedBox(height: 10),
           _buildContribRow(
-            'Permission Abuse',
+            'App Behavior',
+            score.appContribution,
+            AppTheme.neonYellow,
+          ),
+          const SizedBox(height: 10),
+          _buildContribRow(
+            'System Security',
+            score.runtimeContribution,
+            AppTheme.neonCyan,
+          ),
+          const SizedBox(height: 10),
+          _buildContribRow(
+            'Permission Behavior',
             score.permissionContribution,
             AppTheme.neonRed,
+          ),
+          const SizedBox(height: 10),
+          _buildContribRow(
+            'Aggregated Correlations',
+            score.aggregatedContribution,
+            AppTheme.neonBlue,
           ),
         ],
       ),

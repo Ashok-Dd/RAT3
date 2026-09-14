@@ -44,6 +44,32 @@ object AppTrustEngine {
         val hasNotificationAccess: Boolean,
         val blocklistHit: Boolean,
         val userMarkedTrusted: Boolean = false,
+        // Can install other APKs without going through the system installer UI
+        // (REQUEST_INSTALL_PACKAGES, granted). Legitimate for browsers, file
+        // managers, and alternative app stores, so this is weak-tier evidence
+        // like install source — never escalates alone. Re-added after being
+        // dropped from an earlier rewrite of this engine (see rat-behavior-
+        // coverage.md's "Silent app install/uninstall" row).
+        val canInstallPackages: Boolean = false,
+        // Can silently delete/uninstall apps it installed itself (REQUEST_DELETE_PACKAGES,
+        // granted) without the system confirmation dialog — the uninstall-side companion to
+        // canInstallPackages above. Same weak-tier treatment for the same reason.
+        val canDeletePackages: Boolean = false,
+        // Holds broad read access to files/media (READ_EXTERNAL_STORAGE, READ_MEDIA_*, or
+        // MANAGE_EXTERNAL_STORAGE) AND has sent a non-trivial amount of network data. Neither
+        // fact alone means anything — nearly every app touches one or the other — but the
+        // combination is what file-exfiltration actually looks like from the outside.
+        val hasStorageAccess: Boolean = false,
+        val hasSentNetworkData: Boolean = false,
+        // Contacts / call log — counted only in the generic dangerous-permission tally until
+        // now (unlike SMS/notifications/screen-content, which already get named findings).
+        val hasContactsAccess: Boolean = false,
+        val hasCallLogAccess: Boolean = false,
+        // No launcher activity Android can show the user — one of the simplest ways an app
+        // hides itself after install. Already fed into the pre-install ML classifier's
+        // `activityCalled` feature; never previously surfaced as a plain-language finding
+        // for an already-installed app.
+        val hasNoLauncherIcon: Boolean = false,
     )
 
     data class Assessment(
@@ -76,6 +102,9 @@ object AppTrustEngine {
             }
             if (isRecentInstall) evidence += Evidence("weak", "Installed ${f.installDaysAgo} day(s) ago")
             if (f.targetSdkVersion < 26) evidence += Evidence("weak", "Targets old Android API ${f.targetSdkVersion}")
+            if (f.canInstallPackages) evidence += Evidence("weak", "Can install other apps without the system installer prompt")
+            if (f.canDeletePackages) evidence += Evidence("weak", "Can silently uninstall apps it installed, without confirmation")
+            if (f.hasNoLauncherIcon) evidence += Evidence("weak", "Has no visible icon or launch screen — a common way apps hide from users")
         }
 
         // Private Data Access — always recorded so trusted apps show the transparent
@@ -92,10 +121,24 @@ object AppTrustEngine {
         }
         if (f.hasAccessibility) {
             privateDataAccess += "Can read anything shown on screen, including emails and messages you view"
-            if (!isTrusted) evidence += Evidence("medium", "Accessibility service can read on-screen content")
+            // Named explicitly to match the pre-installation scanner's wording for the same
+            // capability (Layer1SafetyAnalyzer) — this was previously folded into generic
+            // accessibility-abuse language post-install without naming the keylogging angle.
+            if (!isTrusted) evidence += Evidence("medium", "Accessibility service can read on-screen content — a common keylogging/overlay technique")
         }
         if ("android.permission.ACCESS_BACKGROUND_LOCATION" in f.dangerousGranted && !isTrusted) {
             evidence += Evidence("medium", "Tracks location in the background")
+        }
+        if (f.hasContactsAccess) {
+            privateDataAccess += "Can read your contacts"
+            if (!isTrusted) evidence += Evidence("medium", "Can read your contacts")
+        }
+        if (f.hasCallLogAccess) {
+            privateDataAccess += "Can read your call log"
+            if (!isTrusted) evidence += Evidence("medium", "Can read your call log")
+        }
+        if (f.hasStorageAccess && f.hasSentNetworkData && !isTrusted) {
+            evidence += Evidence("medium", "Can read your files on this device and has sent data over the network")
         }
 
         if (!isTrusted) {

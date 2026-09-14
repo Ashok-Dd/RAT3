@@ -34,6 +34,7 @@ Map<String, dynamic> _conn({
   DateTime? firstSeen,
   DateTime? lastSeen,
   bool isActive = true,
+  String? queriedDomain,
 }) {
   final now = DateTime.now();
   return {
@@ -49,6 +50,7 @@ Map<String, dynamic> _conn({
     'packetCount': 5,
     'reconnectCount': reconnectCount,
     'isActive': isActive,
+    'queriedDomain': queriedDomain,
   };
 }
 
@@ -128,6 +130,64 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(monitor.lastSnapshot.single.assessment, ConnectionAssessment.investigate);
+  });
+
+  test(
+    'a DGA-looking queried domain alone is only INVESTIGATE, not SUSPICIOUS',
+    () async {
+      platform.nextConnections = [
+        _conn(remotePort: 53, queriedDomain: 'xqzptkvwmrfjhbsd.com'),
+      ];
+      await monitor.enable();
+      await Future<void>.delayed(Duration.zero);
+
+      final c = monitor.lastSnapshot.single;
+      expect(c.assessment, ConnectionAssessment.investigate);
+      expect(c.reasons.any((r) => r.contains('algorithmically-generated')), isTrue);
+    },
+  );
+
+  test(
+    'a DGA-looking domain plus a suspicious port together are SUSPICIOUS',
+    () async {
+      platform.nextConnections = [
+        _conn(remotePort: 4444, queriedDomain: 'xqzptkvwmrfjhbsd.net'),
+      ];
+      await monitor.enable();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(monitor.lastSnapshot.single.assessment, ConnectionAssessment.suspicious);
+    },
+  );
+
+  test('an ordinary-looking domain contributes no signal', () async {
+    platform.nextConnections = [
+      _conn(remotePort: 53, queriedDomain: 'www.google.com'),
+    ];
+    await monitor.enable();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(monitor.lastSnapshot.single.assessment, ConnectionAssessment.normal);
+  });
+
+  group('looksAlgorithmicallyGenerated', () {
+    test('flags a long, high-entropy random-looking label', () {
+      expect(looksAlgorithmicallyGenerated('xqzptkvwmrfjhbsd.com'), isTrue);
+    });
+
+    test('flags a long run of consonants with no vowels', () {
+      expect(looksAlgorithmicallyGenerated('bcdfghjklmnpqrst.net'), isTrue);
+    });
+
+    test('does not flag ordinary short real-world domains', () {
+      expect(looksAlgorithmicallyGenerated('google.com'), isFalse);
+      expect(looksAlgorithmicallyGenerated('www.wikipedia.org'), isFalse);
+      expect(looksAlgorithmicallyGenerated('api.whatsapp.com'), isFalse);
+    });
+
+    test('does not flag a bare hostname with no TLD-like second label', () {
+      expect(looksAlgorithmicallyGenerated('localhost'), isFalse);
+    });
   });
 
   test('disable() clears the snapshot and stops polling', () async {

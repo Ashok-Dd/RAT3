@@ -110,6 +110,7 @@ class AppController extends ChangeNotifier {
       riskEngine = RiskEngine(
         platform: platformService,
         networkMonitor: networkMonitor,
+        connectionMonitor: connectionMonitor,
         storageService: storageService,
         alertEngine: alertEngine,
       );
@@ -215,17 +216,20 @@ class AppController extends ChangeNotifier {
 
   // ── Manual / Auto Scan ────────────────────────────────────────────────────
 
-  /// Runs a full real scan across all 3 layers in parallel.
-  /// Clears all previous alerts first so the user always sees a fresh set.
+  /// Runs a full scan across the Runtime/Network/Permission layers in parallel. Does NOT
+  /// touch App Scanner alerts -- this routine cycle (manual "Scan Now" or the auto-scan
+  /// timer) never re-runs the app scanner, so clearing its alerts here used to silently
+  /// erase every "Scan All Apps" finding (including a MALICIOUS_INDICATORS verdict) the
+  /// next time this ran, with nothing to replace it until the user reopened that screen
+  /// manually. App Scanner alerts are cleared and refreshed together, only when a real
+  /// app scan actually runs -- see AlertEngine.injectAppScanAlerts.
   Future<void> performScan() async {
     if (_isScanning) return;
     _isScanning = true;
     notifyListeners();
 
     try {
-      AppLogger.info(_tag, 'Starting full real scan — clearing old alerts…');
-      // Clear all previous alerts AND connections so user always sees fresh results
-      await alertEngine.resetForNewScan();
+      AppLogger.info(_tag, 'Starting full real scan…');
       _connections = [];
       notifyListeners();
 
@@ -322,6 +326,13 @@ class AppController extends ChangeNotifier {
 
   Future<void> resetRiskScore() async {
     await storageService.resetAll();
+    // Also clears AlertEngine's own _seenIds/_titleLastSeen, not just AppController's
+    // display list -- without this, a condition that's still genuinely true (e.g. "Device
+    // is rooted") stayed permanently suppressed by Tier-1 dedup after a reset (since its ID
+    // was never actually cleared), while any alert that arrived microseconds after this
+    // reset would repopulate AlertEngine's own list and make the "cleared" alerts reappear
+    // via the next alertStream update.
+    await alertEngine.clearAlerts();
     _riskScore = RiskScore.initial;
     _alerts = [];
     _connections = [];

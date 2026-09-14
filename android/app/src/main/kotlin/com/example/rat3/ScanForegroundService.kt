@@ -21,6 +21,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.rat3.scanner.DeviceAppUtils
 import java.io.File
 
 /**
@@ -401,17 +402,26 @@ class ScanForegroundService : Service() {
             }
 
             // 4 ── SYSTEM SECURITY ────────────────────────────────────────
-            if (checkIsRooted()) findings += Finding("root", Sev.CRITICAL,
+            val isRooted = checkIsRooted()
+            if (isRooted) findings += Finding("root", Sev.CRITICAL,
                 "Device is rooted",
                 "Root access detected. Any app can access all your data " +
                 "without permission dialogs on a rooted device.")
 
-            if (Settings.Global.getInt(contentResolver,
-                    Settings.Global.ADB_ENABLED, 0) == 1)
-                findings += Finding("usb_debug", Sev.HIGH,
-                    "USB debugging enabled",
-                    "ADB is ON. A connected PC can fully control your device, " +
-                    "install apps silently, and read all files.")
+            // USB debugging alone is NOT scored -- it's an ordinary, common developer/power-
+            // user setting, and a RAT's threat model is remote/network control, not "a
+            // computer is physically plugged into your unlocked phone". Only the combination
+            // with root is named, since that meaningfully widens local-access risk in a way
+            // neither setting implies alone. Mirrors the same fix already made to the
+            // Dashboard's RuleBasedScorer -- see its "Rules that were deliberately removed or
+            // changed" doc section for the full reasoning.
+            val usbDebugging = Settings.Global.getInt(contentResolver,
+                Settings.Global.ADB_ENABLED, 0) == 1
+            if (isRooted && usbDebugging)
+                findings += Finding("root_usb_debug", Sev.HIGH,
+                    "Rooted device with USB debugging enabled",
+                    "Together these meaningfully widen what anyone with physical access to " +
+                    "this device could do -- on their own, neither is unusual for a developer.")
 
             // 5 ── SIDELOADED HIGH-RISK APPS ──────────────────────────────
             for (a in getSideloadedRiskyApps()) findings += Finding(
@@ -568,6 +578,7 @@ class ScanForegroundService : Service() {
             val pkgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
                 pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(flag.toLong()))
             else @Suppress("DEPRECATION") pm.getInstalledPackages(flag)
+            val deviceSetupTimeMs = DeviceAppUtils.computeDeviceSetupTimeMs(pkgs)
 
             for (pkg in pkgs) {
                 try {
@@ -576,6 +587,11 @@ class ScanForegroundService : Service() {
                     val sys = (ai.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
                     val upd = (ai.flags and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
                     if (sys && !upd) continue
+                    // Factory/carrier-preloaded apps have no recorded installer either (they
+                    // were never installed BY anything -- they were part of the system image),
+                    // which the check below would otherwise misread as "sideloaded". Skip them
+                    // the same way MainActivity's Scan All Apps does -- see DeviceAppUtils.
+                    if (DeviceAppUtils.isOemPreinstalled(pkg, deviceSetupTimeMs)) continue
 
                     val installer = try {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
@@ -608,26 +624,25 @@ class ScanForegroundService : Service() {
         return result
     }
 
+    // Package names with a currently-ENABLED accessibility service, not merely apps that
+    // DECLARE the BIND_ACCESSIBILITY_SERVICE permission in their manifest -- plenty of
+    // legitimate apps (password managers, screen readers) declare the capability without
+    // the user ever turning it on. The old declared-permission check flagged every one of
+    // those as "accessibility abuse" regardless of whether the service was ever enabled.
+    // Shared with MainActivity via DeviceAppUtils so both scanners agree.
     private fun getAccessibilityAbusers(): List<String> {
         val result = mutableListOf<String>()
         try {
-            val pm   = packageManager
-            val flag = PackageManager.GET_PERMISSIONS
-            val pkgs = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-                pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(flag.toLong()))
-            else @Suppress("DEPRECATION") pm.getInstalledPackages(flag)
-
-            for (pkg in pkgs) {
+            val pm = packageManager
+            for (pkgName in DeviceAppUtils.getActiveAccessibilityServicePackages(this)) {
+                if (pkgName == packageName) continue
                 try {
-                    val ai = pkg.applicationInfo ?: continue
-                    if (pkg.packageName == packageName) continue
+                    val ai = pm.getApplicationInfo(pkgName, 0)
                     val sys = (ai.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
                     val upd = (ai.flags and android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
                     if (sys && !upd) continue
-                    val perms = pkg.requestedPermissions ?: continue
-                    if ("android.permission.BIND_ACCESSIBILITY_SERVICE" in perms)
-                        result += try { pm.getApplicationLabel(ai).toString() }
-                                  catch (_: Exception) { pkg.packageName }
+                    result += try { pm.getApplicationLabel(ai).toString() }
+                              catch (_: Exception) { pkgName }
                 } catch (_: Exception) {}
             }
         } catch (e: Exception) { Log.w(TAG, "accessibilityAbusers: ${e.message}") }

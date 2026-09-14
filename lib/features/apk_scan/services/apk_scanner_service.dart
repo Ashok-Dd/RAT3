@@ -55,16 +55,13 @@ class ApkScannerService {
     }
   }
 
-  /// Opens the native file picker. Returns the resolved path, or null if cancelled.
-  Future<String?> pickApkFile() async {
-    try {
-      return await _fileChannel.invokeMethod<String>(
-        ScannerMethods.pickApkFile,
-      );
-    } on Exception catch (e) {
-      debugPrint('[RAT3] pickApkFile: $e');
-      return null;
-    }
+  /// Opens the native file picker. Returns the resolved path, or null if the
+  /// user cancelled (the native side reports cancellation as a plain `null`
+  /// result, not an exception). Throws [PlatformException] for a real
+  /// failure (permission denial, storage-access error, …) — callers must
+  /// distinguish that from a cancel rather than treating both as silence.
+  Future<String?> pickApkFile() {
+    return _fileChannel.invokeMethod<String>(ScannerMethods.pickApkFile);
   }
 
   /// Runs the four-layer scan. [onLayerComplete] fires with the 0-based index of

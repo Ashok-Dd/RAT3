@@ -88,6 +88,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
       }
       apps.sort((a, b) => b.txBytes.compareTo(a.txBytes));
 
+      if (!mounted) return;
       setState(() {
         _apps = apps;
         _lastLoaded = DateTime.now();
@@ -95,6 +96,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
         _usageAccessGranted = flags['hasUsageStatsPermission'] == true;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -707,7 +709,9 @@ class _ConnectionCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '${c.remoteAddress}:${c.remotePort}  ·  ${c.protocol}',
+              c.queriedDomain != null
+                  ? '${c.queriedDomain}  ·  ${c.remoteAddress}:${c.remotePort}  ·  ${c.protocol}'
+                  : '${c.remoteAddress}:${c.remotePort}  ·  ${c.protocol}',
               style: AppTheme.bodyMedium.copyWith(
                 color: AppTheme.textSecondary,
                 fontSize: 11,
@@ -775,6 +779,8 @@ class _ConnectionDetailSheet extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             _row('Process', '${c.appName} (${c.packageName})'),
+            if (c.queriedDomain != null)
+              _row('Queried Domain', c.queriedDomain!),
             _row('Remote Endpoint', '${c.remoteAddress}:${c.remotePort}'),
             _row('Protocol', c.protocol),
             _row('First Observed', _time(c.firstSeen)),

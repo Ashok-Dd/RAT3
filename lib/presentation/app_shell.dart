@@ -43,11 +43,25 @@ class _AppShellState extends State<AppShell> {
     ),
   ];
 
+  // Guards against opening the same cold-start APK twice — see _openApkScan.
+  String? _handledApkPath;
+
   @override
   void initState() {
     super.initState();
     // "Scan with RAT3" from a file manager routes straight into an APK scan.
     ApkScannerService().onIncomingApk = _openApkScan;
+    // The native side notifies Flutter of a cold-start ".apk" intent
+    // synchronously during Flutter engine setup — often before this handler
+    // above is even registered, since that depends on AppShell finishing its
+    // first build. A MethodChannel call made before any handler exists is
+    // simply dropped, not queued, so "Scan with RAT3" could silently do
+    // nothing on a cold start. Pull any such pending path explicitly as a
+    // fallback; _openApkScan's path-dedup keeps this from double-opening if
+    // the push notification *did* land first.
+    ApkScannerService().getInitialApkPath().then((path) {
+      if (path != null) _openApkScan(path);
+    });
   }
 
   @override
@@ -59,7 +73,8 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openApkScan(String path) {
-    if (!mounted) return;
+    if (!mounted || path == _handledApkPath) return;
+    _handledApkPath = path;
     Navigator.of(context).push(
       MaterialPageRoute<void>(builder: (_) => ApkScanningScreen(apkPath: path)),
     );

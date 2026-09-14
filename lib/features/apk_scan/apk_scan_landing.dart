@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/theme/app_theme.dart';
 import '../../widgets/common_widgets.dart';
@@ -35,10 +36,26 @@ class ApkScanLanding extends StatelessWidget {
   ];
 
   Future<void> _pick(BuildContext context) async {
-    final path = await ApkScannerService().pickApkFile();
+    String? path;
+    try {
+      path = await ApkScannerService().pickApkFile();
+    } on PlatformException catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not open the file picker: ${e.message ?? e.code}',
+          ),
+        ),
+      );
+      return;
+    }
     if (path == null || !context.mounted) return;
+    final apkPath = path;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => ApkScanningScreen(apkPath: path)),
+      MaterialPageRoute<void>(
+        builder: (_) => ApkScanningScreen(apkPath: apkPath),
+      ),
     );
   }
 

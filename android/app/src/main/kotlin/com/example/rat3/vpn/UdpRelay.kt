@@ -32,7 +32,7 @@ class UdpRelay(
     // Keyed by "clientPort:destAddr:destPort" -- one UDP "flow" per unique 3-tuple from our side.
     private val flows = HashMap<String, Flow>()
 
-    fun onPacket(ip: IpPacket.Ipv4Header, udp: IpPacket.UdpHeader, buf: ByteBuffer, totalLength: Int) {
+    fun onPacket(ip: IpPacket.IpHeader, udp: IpPacket.UdpHeader, buf: ByteBuffer, totalLength: Int) {
         val key = "${udp.sourcePort}:${IpPacket.addressToString(ip.destAddress)}:${udp.destPort}"
         val payloadLen = totalLength - udp.payloadOffset
         val payload = ByteArray(payloadLen)
@@ -56,6 +56,11 @@ class UdpRelay(
             return
         }
 
+        // Only the outbound query side is parsed -- the query's own question section is
+        // enough to name what was being resolved, and it's simpler/safer than also parsing
+        // (and trusting) a response payload from the real destination.
+        val queriedDomain = if (udp.destPort == 53) DnsParser.extractQueryName(payload) else null
+
         tracker.recordPacket(
             protocol = IpPacket.PROTOCOL_UDP,
             localAddress = IpPacket.addressToString(ip.sourceAddress),
@@ -64,6 +69,7 @@ class UdpRelay(
             remotePort = udp.destPort,
             bytesOut = payloadLen,
             bytesIn = 0,
+            queriedDomain = queriedDomain,
         )
     }
 

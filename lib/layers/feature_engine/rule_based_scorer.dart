@@ -168,17 +168,14 @@ class RuleBasedScorer {
       );
     }
 
-    // Location active during idle
-    if (f.locationActiveDuringIdle) {
-      s += 15;
-      r.add(
-        RuleHit(
-          AlertSeverity.high,
-          'Location accessed during idle hours',
-          'Location was accessed between 23:00–06:00.',
-        ),
-      );
-    }
+    // Deliberately not scored: this device has no way to detect an actual location
+    // *read* (there's no live "location active now" API the way camera/mic have one) --
+    // locationActiveDuringIdle was really just "an app holds background-location
+    // permission" AND "it's currently 23:00-06:00", with no access event verified at
+    // all, yet was worded to assert one ("Location was accessed between 23:00-06:00")
+    // for any phone with a weather/maps/delivery app installed, every single night.
+    // The permission fact itself is already scored, honestly, by locationBgAppsCount
+    // just above.
 
     // High irregularity score
     if (f.sensorUsageIrregularity > 60) {
@@ -376,35 +373,28 @@ class RuleBasedScorer {
   double _scoreApp(DeviceFeatures f, List<RuleHit> r) {
     double s = 0;
 
-    // Sideloaded apps (biggest single risk signal)
-    if (f.nonPlayStoreAppCount >= 3) {
+    // Apps the App Trust Engine's own evidence ladder already flagged NEEDS_REVIEW or
+    // worse. Deliberately NOT a raw sideloaded/unknown-installer count: being installed
+    // outside Play Store is not evidence of a RAT by itself — a developer's own dozen
+    // sideloaded test builds, or a device that shipped with a dozen OEM-bundled apps
+    // (excluded from scanning entirely, see isOemPreinstalled), are not "risk" just for
+    // existing. Only apps that already show some other concerning signal count here.
+    if (f.flaggedAppCount >= 3) {
       s += 40;
       r.add(
         RuleHit(
           AlertSeverity.critical,
-          '${f.nonPlayStoreAppCount} sideloaded / non-Play Store apps',
-          'Multiple apps installed outside Play Store — high RAT risk.',
+          '${f.flaggedAppCount} apps flagged by the App Trust Engine',
+          'Multiple apps show real evidence beyond just their install source — see Scan All Apps.',
         ),
       );
-    } else if (f.nonPlayStoreAppCount > 0) {
+    } else if (f.flaggedAppCount > 0) {
       s += 20;
       r.add(
         RuleHit(
           AlertSeverity.high,
-          '${f.nonPlayStoreAppCount} sideloaded app(s)',
-          'Apps installed outside Google Play Store detected.',
-        ),
-      );
-    }
-
-    // Unknown installer
-    if (f.unknownInstallerAppCount > 0) {
-      s += 15;
-      r.add(
-        RuleHit(
-          AlertSeverity.high,
-          '${f.unknownInstallerAppCount} app(s) with unknown installer',
-          'Apps whose install source cannot be verified.',
+          '${f.flaggedAppCount} app(s) flagged by the App Trust Engine',
+          'At least one app shows real evidence beyond just its install source — see Scan All Apps.',
         ),
       );
     }
@@ -449,18 +439,15 @@ class RuleBasedScorer {
       s += 5;
     }
 
-    // Accessibility abuse
-    if (f.appsWithAccessibilityCount > 0) {
-      s += 25;
-      r.add(
-        RuleHit(
-          AlertSeverity.critical,
-          '${f.appsWithAccessibilityCount} app(s) using Accessibility Service',
-          'Accessibility services can read screen content and simulate touches — '
-              'extremely high risk if granted to unknown apps.',
-        ),
-      );
-    }
+    // Accessibility abuse: NOT scored from the raw "is any accessibility service active
+    // anywhere on the device" boolean (informational only — see appsWithAccessibilityCount
+    // in the summary string). That boolean can't tell a legitimate screen reader or a
+    // password manager's autofill apart from actual abuse -- it's the exact declared/
+    // active-without-correlation shape already fixed elsewhere in this file. An
+    // accessibility service on an app that ISN'T already Play-Store-trusted is real
+    // evidence and is already captured by flaggedAppCount above, via the App Trust
+    // Engine's own evidence ladder (which escalates accessibility+overlay/admin combos to
+    // its top tier) -- scoring it a second time here would be the same fact counted twice.
 
     // Many background processes
     if (f.appsRunningInBgCount > 15) {
@@ -510,38 +497,55 @@ class RuleBasedScorer {
       );
     }
 
-    // USB debugging
-    if (f.usbDebuggingEnabled) {
-      s += 25;
-      r.add(
-        RuleHit(
-          AlertSeverity.high,
-          'USB debugging (ADB) is enabled',
-          'A connected computer can fully access your device via ADB.',
-        ),
-      );
-    }
-
-    // Developer options
-    if (f.developerOptionsEnabled && !f.usbDebuggingEnabled) {
+    // USB debugging / developer options: deliberately NOT scored on their own. These are
+    // completely normal, common settings for developers and power users — a RAT's threat
+    // model is remote/network control, not "a computer is physically plugged into your
+    // unlocked phone." Scoring them as risk by default punished exactly the audience most
+    // likely to have them on for entirely legitimate reasons. Root + USB debugging together
+    // is the one combination worth naming: it meaningfully widens what anyone with local
+    // physical access to the device could do, which root or ADB access alone don't imply.
+    if (f.rootDetected && f.usbDebuggingEnabled) {
       s += 10;
       r.add(
         RuleHit(
-          AlertSeverity.low,
-          'Developer options are enabled',
-          'Developer mode exposes additional device access features.',
+          AlertSeverity.medium,
+          'Rooted device with USB debugging enabled',
+          'Together these meaningfully widen what anyone with physical access to this '
+              'device could do — on their own, neither is unusual for a developer.',
         ),
       );
     }
 
-    // Unknown sources
-    if (f.unknownSourcesEnabled) {
-      s += 20;
+    // Unknown sources: also common for legitimate reasons (F-Droid, corporate MDM,
+    // developers) — only worth flagging when there's also actual evidence an app
+    // installed that way is showing concerning behavior, not just the setting existing.
+    if (f.unknownSourcesEnabled && f.flaggedAppCount > 0) {
+      s += 15;
       r.add(
         RuleHit(
-          AlertSeverity.high,
-          'Install from unknown sources is enabled',
-          'Apps can be installed from any source, bypassing Play Store security.',
+          AlertSeverity.medium,
+          'Install from unknown sources is enabled, with flagged apps present',
+          'Sideloading is allowed, and at least one sideloaded app shows real '
+              'evidence beyond its install source — see Scan All Apps.',
+        ),
+      );
+    }
+
+    // Play Protect verification off, alone, is a weak signal — same philosophy as unknown
+    // sources: a setting is a fact about the device, not evidence of a specific threat,
+    // until correlated with something else. It also disables Android's own background
+    // malware scanning of every installed app, so it's still worth a small, low-severity
+    // mention rather than being silently collected and never shown (this was previously
+    // read and dropped entirely — see the App Trust Engine doc's honesty note).
+    if (f.verifyAppsDisabled) {
+      s += 8;
+      r.add(
+        RuleHit(
+          AlertSeverity.low,
+          'Play Protect app verification is turned off',
+          'Android\'s own background malware scanning for newly installed apps is '
+              'disabled. Not evidence of compromise by itself, but it removes a layer '
+              'of protection this device would otherwise have.',
         ),
       );
     }
@@ -560,17 +564,8 @@ class RuleBasedScorer {
       s += 10;
     }
 
-    // Accessibility services
-    if (f.accessibilityServicesActive) {
-      s += 20;
-      r.add(
-        RuleHit(
-          AlertSeverity.high,
-          'Accessibility services active',
-          'One or more apps have accessibility service access enabled.',
-        ),
-      );
-    }
+    // Accessibility service usage isn't scored here or in App Behavior as a raw
+    // device-wide boolean — see App Behavior's flaggedAppCount comment for why.
 
     // High CPU usage
     if (f.cpuUsagePercent > 85) {
@@ -704,17 +699,8 @@ class RuleBasedScorer {
       );
     }
 
-    // Accessibility permission
-    if (f.accessibilityPermissionActive) {
-      s += 25;
-      r.add(
-        RuleHit(
-          AlertSeverity.critical,
-          'Accessibility permission is active',
-          'An app can read screen content, inputs, and simulate user actions.',
-        ),
-      );
-    }
+    // Accessibility service usage isn't scored here or in App Behavior as a raw
+    // device-wide boolean — see App Behavior's flaggedAppCount comment for why.
 
     return s.clamp(0, 100);
   }

@@ -3,6 +3,7 @@ import 'dart:math';
 import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/core/utils/app_utils.dart';
 import 'package:rat3/data/services/platform_channel_service.dart';
+import 'package:rat3/layers/connection_monitor/connection_monitor.dart';
 import 'package:rat3/layers/feature_engine/device_features.dart';
 import 'package:rat3/layers/network_monitor/network_monitor.dart';
 
@@ -15,7 +16,9 @@ import 'package:rat3/layers/network_monitor/network_monitor.dart';
 /// Data sources used:
 ///   PlatformChannelService.checkSensorInUse()     → mic/camera hardware state
 ///   PlatformChannelService.getUserSensorApps()    → per-app sensor permissions
-///   PlatformChannelService.getSecurityFlags()     → root, USB debug, dev options
+///   PlatformChannelService.getDetailedSecurityFlags() → root, USB debug, dev options,
+///                                                        real accessibility/admin lists,
+///                                                        unknown sources, screen state
 ///   PlatformChannelService.getCpuUsage()          → real /proc/stat CPU %
 ///   PlatformChannelService.getMemoryInfo()        → ActivityManager.MemoryInfo
 ///   PlatformChannelService.getBatteryInfo()       → BatteryManager
@@ -29,6 +32,7 @@ class FeatureCollector {
 
   final PlatformChannelService _platform;
   final NetworkMonitor _networkMonitor;
+  final ConnectionMonitor _connectionMonitor;
 
   // Rolling history for variance and correlation
   final List<double> _cpuHistory = [];
@@ -37,12 +41,22 @@ class FeatureCollector {
   final List<bool> _networkHistory = []; // was background TX > 0 at each poll
   DateTime? _lastBatteryCheck;
   double _lastBatteryLevel = -1;
+  // getAppNetworkUsage() reports NetworkStatsManager totals over the last 30 days, summed
+  // across every app -- a whole-phone, month-long total, not a live "background data sent"
+  // reading. On any actively-used phone that total is virtually always well past 50MB, which
+  // made every "data sent" rule below fire almost unconditionally. What those rules actually
+  // need is how much NEW data has gone out since the last check, so these track the previous
+  // reading and every collect() call scores only the delta.
+  double? _lastNetSentMb;
+  double? _lastNetRecvMb;
 
   FeatureCollector({
     required PlatformChannelService platform,
     required NetworkMonitor networkMonitor,
+    required ConnectionMonitor connectionMonitor,
   }) : _platform = platform,
-       _networkMonitor = networkMonitor;
+       _networkMonitor = networkMonitor,
+       _connectionMonitor = connectionMonitor;
 
   /// Collect all features in one shot.
   /// Takes ~1–2 seconds on most devices.
@@ -53,7 +67,14 @@ class FeatureCollector {
     // ── Gather raw data in parallel where safe ────────────────────────────
     final results = await Future.wait([
       _platform.checkSensorInUse(), // 0
-      _platform.getSecurityFlags(), // 1
+      // getDetailedSecurityFlags(), NOT getSecurityFlags() -- the latter's native handler
+      // doesn't return isDeviceAdminActive/activeDeviceAdminCount/isAccessibilityServiceActive
+      // /isUnknownSourcesEnabled at all. Reading those keys from getSecurityFlags()'s map
+      // silently fell back to their `?? false`/`?? 0` defaults, permanently -- meaning a
+      // real Device Administrator app, an actually-enabled accessibility service, or unknown
+      // sources being on could never be detected by the Dashboard's score, regardless of the
+      // device's real state. getDetailedSecurityFlags() is a superset that actually has them.
+      _platform.getDetailedSecurityFlags(), // 1
       _platform.getCpuUsage(), // 2  (returns double directly)
       _platform.getMemoryInfo(), // 3
       _platform.getBatteryInfo(), // 4
@@ -78,6 +99,10 @@ class FeatureCollector {
     // ── SENSOR ────────────────────────────────────────────────────────────
     final cameraActiveNow = sensorStatus['isCameraInUse'] as bool? ?? false;
     final micActiveNow = sensorStatus['isMicInUse'] as bool? ?? false;
+    // Real screen state (PowerManager.isInteractive) -- default to "on" (the safe
+    // assumption) if the platform call ever fails, so a missing reading can never turn
+    // ordinary camera/mic use into a false "active with screen off" critical finding.
+    final isScreenOn = secFlags['isScreenOn'] as bool? ?? true;
 
     // Track mic history for correlation
     _micHistory.add(micActiveNow);
@@ -174,12 +199,27 @@ class FeatureCollector {
 
     // ── APP BEHAVIOR ──────────────────────────────────────────────────────
     final totalUserApps = scannedApps.length;
+    // Informational only -- raw sideloaded/unknown-installer counts are NOT what drives the
+    // score below. A device with a dozen OEM-bundled apps, or a developer with a dozen of
+    // their own sideloaded test builds, is not evidence of a RAT by itself; scoring the raw
+    // count punished exactly the false positives the App Trust Engine's evidence ladder
+    // exists to avoid. See flaggedAppCount.
     final sideloadedApps = scannedApps
         .where((a) => a['isSideloaded'] as bool? ?? false)
         .length;
     final unknownInstaller = scannedApps.where((a) {
       final src = a['installSource'] as String? ?? '';
       return src == 'unknown' || src == 'sideloaded';
+    }).length;
+    // What actually drives the App Behavior score: apps the App Trust Engine's own
+    // evidence ladder already flagged NEEDS_REVIEW or worse -- i.e. sideloaded/unknown
+    // AND showing some other concerning signal (private data access, recent install,
+    // real active sensor use, an abuse combo...), not sideloaded status alone.
+    final flaggedApps = scannedApps.where((a) {
+      final level = a['trustLevel'] as String? ?? 'UNKNOWN';
+      return level == 'NEEDS_REVIEW' ||
+          level == 'SUSPICIOUS' ||
+          level == 'MALICIOUS_INDICATORS';
     }).length;
     final recentInstalls = scannedApps
         .where((a) => a['isRecentInstall'] as bool? ?? false)
@@ -210,6 +250,11 @@ class FeatureCollector {
     final rootDetected = secFlags['isRooted'] as bool? ?? false;
     final usbDebugging = secFlags['isUsbDebuggingEnabled'] as bool? ?? false;
     final devOptions = secFlags['isDeveloperOptionsEnabled'] as bool? ?? false;
+    // Play Protect's app-verification switch — read by the native layer but, until now,
+    // never used downstream (collected and then dropped, per the App Trust Engine doc's
+    // honesty note). Default true (the Android default) so a missing reading never
+    // fabricates a "Play Protect is off" finding.
+    final verifyAppsDisabled = !(secFlags['isVerifyAppsEnabled'] as bool? ?? true);
 
     // Battery optimization exceptions count
     final batteryOptDisabled =
@@ -243,16 +288,29 @@ class FeatureCollector {
     final screenOnRatio = _computeScreenRatio(totalFgMs);
 
     // ── NETWORK ───────────────────────────────────────────────────────────
-    double totalBgSentMb = 0, totalBgRecvMb = 0;
     int uniqueIps = 0;
     bool smallPackets = false;
 
+    double netTotalSentMb = 0, netTotalRecvMb = 0;
     for (final app in netUsage) {
       final tx = (app['txBytes'] as num?)?.toInt() ?? 0;
       final rx = (app['rxBytes'] as num?)?.toInt() ?? 0;
-      totalBgSentMb += tx / (1024 * 1024);
-      totalBgRecvMb += rx / (1024 * 1024);
+      netTotalSentMb += tx / (1024 * 1024);
+      netTotalRecvMb += rx / (1024 * 1024);
     }
+    // First reading ever (no prior total to diff against) reports 0, not the full 30-day
+    // total -- a cold start should never look like a burst of new activity. A device
+    // reboot or app restart also resets these trackers, so the very next reading after one
+    // is likewise a delta of 0 rather than a spurious jump; this is a deliberate trade-off
+    // for correctness (never a false "high activity" reading) over completeness.
+    final totalBgSentMb = _lastNetSentMb == null
+        ? 0.0
+        : max(0.0, netTotalSentMb - _lastNetSentMb!);
+    final totalBgRecvMb = _lastNetRecvMb == null
+        ? 0.0
+        : max(0.0, netTotalRecvMb - _lastNetRecvMb!);
+    _lastNetSentMb = netTotalSentMb;
+    _lastNetRecvMb = netTotalRecvMb;
 
     // From classified connections
     final recentConns = _networkMonitor.detectedConnections
@@ -265,27 +323,47 @@ class FeatureCollector {
         .where((c) => c.category == TrafficCategory.suspicious)
         .length;
 
-    // Unique remote IPs
-    final ipSet = recentConns.map((c) => c.ipAddress).toSet();
-    uniqueIps = ipSet.length;
+    // Unique remote IPs. `NetworkMonitor`'s connections do NOT carry a real IP for the
+    // primary (always-on) per-app path -- `NetworkConnection.ipAddress` is the app's
+    // PACKAGE NAME there (see its own doc comment), since TrafficStats/NetworkStatsManager
+    // has no per-connection IP breakdown at all. Counting those was really counting "how
+    // many apps sent data", mislabeled as "remote IPs contacted" -- found live as a
+    // "84 unique remote IPs contacted" alert that was actually just 84 apps with any
+    // network activity in the last hour, not 84 distinct external servers. Genuine remote
+    // IPs only exist when the opt-in VPN connection monitor is active (see the Network
+    // tab); when it isn't, this reads 0 -- an honest "no data", not a fabricated proxy.
+    uniqueIps = _connectionMonitor.isActive
+        ? _connectionMonitor.lastSnapshot
+              .where((c) => DateTime.now().difference(c.lastSeen).inHours < 1)
+              .map((c) => c.remoteAddress)
+              .toSet()
+              .length
+        : 0;
 
-    // Frequent small packets: many connections with very low bytes each
-    final smallConnections = recentConns
-        .where((c) => c.totalBytes < 1024)
-        .length;
-    smallPackets = smallConnections > 5;
+    // Frequent small packets / beacon pattern: genuinely needs real per-connection data
+    // (many small connections repeating to the same destination) that the always-on
+    // byte-counter path cannot express -- it only has per-app CUMULATIVE totals, never
+    // packet-level repetition. Comparing a 30-day cumulative total to 1KB effectively
+    // never fires on any actively-used phone -- not a false alarm, but not real detection
+    // either. Uses the VPN monitor's real per-connection reconnect data when available;
+    // honestly reports false (not a guess) when it isn't.
+    smallPackets =
+        _connectionMonitor.isActive &&
+        _connectionMonitor.lastSnapshot.where((c) => c.isPersistent).length > 5;
 
     // Track network history for correlation
     final hasActiveTx = totalBgSentMb > 0;
     _networkHistory.add(hasActiveTx);
     if (_networkHistory.length > 20) _networkHistory.removeAt(0);
 
-    // Data sent during idle hours
-    final idleConns = recentConns.where((c) => _isIdleHour(c.detectedAt.hour));
-    final idleSentMb = idleConns.fold<double>(
-      0,
-      (s, c) => s + c.bytesSent / (1024 * 1024),
-    );
+    // Data sent during idle hours. Deliberately reuses the already delta-corrected
+    // totalBgSentMb above rather than summing individual connections' `bytesSent` --
+    // that field is itself a 30-day cumulative total (see getAppNetworkUsage's doc
+    // comment), so summing it per-connection would reintroduce the exact same
+    // lifetime-total-misread-as-recent-activity bug this fix exists to eliminate. If
+    // this scan is running during idle hours, whatever new data it just measured is
+    // "sent during idle hours" by definition -- no separate per-connection sum needed.
+    final idleSentMb = isIdle ? totalBgSentMb : 0.0;
 
     // Data sent without interaction = TX when no foreground apps active
     final noFgActive = usageStats.where((s) {
@@ -338,7 +416,7 @@ class FeatureCollector {
 
     AppLogger.info(
       _tag,
-      'Features collected — ${DeviceFeatures(collectedAt: now, cameraActiveNow: cameraActiveNow, cameraAppsWithPermission: camPerm, cameraAppsRecentFg: camRecentFg, cameraActiveWhenScreenOff: cameraActiveNow && cpuUsage < 5, cameraActiveDuringIdle: cameraActiveNow && isIdle, micActiveNow: micActiveNow, micAppsWithPermission: micPerm, micAppsRecentFg: micRecentFg, micActiveOutsideCalls: micActiveNow, micActiveWhenScreenOff: micActiveNow && cpuUsage < 5, micActiveDuringIdle: micActiveNow && isIdle, locationAppsWithPermission: locPerm, locationBgAppsCount: locBgPerm, locationActiveDuringIdle: locBgPerm > 0 && isIdle, sensorActivityEntropy: entropy, sensorUsageIrregularity: sensorIrregularity, dangerousPermissionCount: dangerousPerms, highRiskPermissionCount: highRiskPerms, cameraPermissionGranted: camPerm > 0, micPermissionGranted: micPerm > 0, locationPermissionGranted: locPerm > 0, bgLocationPermissionGranted: locBgPerm > 0, accessibilityPermissionActive: accessibilityActive, deviceAdminActive: deviceAdminActive, unusedButGrantedRatio: unusedRatio, permissionsVsUsageMismatch: permMismatch, totalUserInstalledApps: totalUserApps, nonPlayStoreAppCount: sideloadedApps, recentlyInstalledAppCount: recentInstalls, unknownInstallerAppCount: unknownInstaller, appsTargetingOldSdkCount: oldSdkApps, appsWithAccessibilityCount: accessibilityActive ? 1 : 0, appsRunningInBgCount: bgProcesses, backgroundServicesActiveCount: bgProcesses, appsRunningDuringIdleCount: idleHourApps, appInstallRatePerWeek: installRate, appUninstallRatePerWeek: 0, frequentInstallUninstallPattern: recentInstalls > 3, developerOptionsEnabled: devOptions, usbDebuggingEnabled: usbDebugging, unknownSourcesEnabled: unknownSources, batteryOptDisabledAppsCount: batteryOptDisabled, cpuUsagePercent: cpuUsage, cpuUsageWhenScreenOff: cpuWhenScreenOff, screenOnToUsageRatio: screenOnRatio, rootDetected: rootDetected, activeDeviceAdminCount: activeAdminCount, accessibilityServicesActive: accessibilityActive, memoryUsagePercent: memPct, batteryDrainRatePerHour: battDrain, bgDataSentMb: totalBgSentMb, bgDataReceivedMb: totalBgRecvMb, dataSentDuringIdleMb: idleSentMb, dataSentWithoutInteraction: dataSentNoInteraction, uniqueRemoteIpsCount: uniqueIps, frequentSmallPackets: smallPackets, cpuSpikesWhenScreenOff: cpuSpikesScreenOff, memoryUsageVariance: memVariance, maliciousConnectionCount: malCount, suspiciousConnectionCount: suspCount, dataSentWhenMicActive: micAndNet, dataSentWhenCameraActive: camAndNet, networkDuringSensorUsage: sensorAndNet, fgToBgActivityRatio: bgRatio, sensorToNetworkCorrelation: sensorNetCorrelation, overallIdleAnomalyScore: idleAnomaly).summary}',
+      'Features collected — ${DeviceFeatures(collectedAt: now, cameraActiveNow: cameraActiveNow, cameraAppsWithPermission: camPerm, cameraAppsRecentFg: camRecentFg, cameraActiveWhenScreenOff: cameraActiveNow && !isScreenOn, cameraActiveDuringIdle: cameraActiveNow && isIdle, micActiveNow: micActiveNow, micAppsWithPermission: micPerm, micAppsRecentFg: micRecentFg, micActiveOutsideCalls: micActiveNow, micActiveWhenScreenOff: micActiveNow && !isScreenOn, micActiveDuringIdle: micActiveNow && isIdle, locationAppsWithPermission: locPerm, locationBgAppsCount: locBgPerm, locationActiveDuringIdle: locBgPerm > 0 && isIdle, sensorActivityEntropy: entropy, sensorUsageIrregularity: sensorIrregularity, dangerousPermissionCount: dangerousPerms, highRiskPermissionCount: highRiskPerms, cameraPermissionGranted: camPerm > 0, micPermissionGranted: micPerm > 0, locationPermissionGranted: locPerm > 0, bgLocationPermissionGranted: locBgPerm > 0, accessibilityPermissionActive: accessibilityActive, deviceAdminActive: deviceAdminActive, unusedButGrantedRatio: unusedRatio, permissionsVsUsageMismatch: permMismatch, totalUserInstalledApps: totalUserApps, nonPlayStoreAppCount: sideloadedApps, recentlyInstalledAppCount: recentInstalls, unknownInstallerAppCount: unknownInstaller, flaggedAppCount: flaggedApps, appsTargetingOldSdkCount: oldSdkApps, appsWithAccessibilityCount: accessibilityActive ? 1 : 0, appsRunningInBgCount: bgProcesses, backgroundServicesActiveCount: bgProcesses, appsRunningDuringIdleCount: idleHourApps, appInstallRatePerWeek: installRate, appUninstallRatePerWeek: 0, frequentInstallUninstallPattern: recentInstalls > 3, developerOptionsEnabled: devOptions, usbDebuggingEnabled: usbDebugging, unknownSourcesEnabled: unknownSources, verifyAppsDisabled: verifyAppsDisabled, batteryOptDisabledAppsCount: batteryOptDisabled, cpuUsagePercent: cpuUsage, cpuUsageWhenScreenOff: cpuWhenScreenOff, screenOnToUsageRatio: screenOnRatio, rootDetected: rootDetected, activeDeviceAdminCount: activeAdminCount, accessibilityServicesActive: accessibilityActive, memoryUsagePercent: memPct, batteryDrainRatePerHour: battDrain, bgDataSentMb: totalBgSentMb, bgDataReceivedMb: totalBgRecvMb, dataSentDuringIdleMb: idleSentMb, dataSentWithoutInteraction: dataSentNoInteraction, uniqueRemoteIpsCount: uniqueIps, frequentSmallPackets: smallPackets, cpuSpikesWhenScreenOff: cpuSpikesScreenOff, memoryUsageVariance: memVariance, maliciousConnectionCount: malCount, suspiciousConnectionCount: suspCount, dataSentWhenMicActive: micAndNet, dataSentWhenCameraActive: camAndNet, networkDuringSensorUsage: sensorAndNet, fgToBgActivityRatio: bgRatio, sensorToNetworkCorrelation: sensorNetCorrelation, overallIdleAnomalyScore: idleAnomaly).summary}',
     );
 
     return DeviceFeatures(
@@ -346,13 +424,13 @@ class FeatureCollector {
       cameraActiveNow: cameraActiveNow,
       cameraAppsWithPermission: camPerm,
       cameraAppsRecentFg: camRecentFg,
-      cameraActiveWhenScreenOff: cameraActiveNow && cpuUsage < 5,
+      cameraActiveWhenScreenOff: cameraActiveNow && !isScreenOn,
       cameraActiveDuringIdle: cameraActiveNow && isIdle,
       micActiveNow: micActiveNow,
       micAppsWithPermission: micPerm,
       micAppsRecentFg: micRecentFg,
       micActiveOutsideCalls: micActiveNow,
-      micActiveWhenScreenOff: micActiveNow && cpuUsage < 5,
+      micActiveWhenScreenOff: micActiveNow && !isScreenOn,
       micActiveDuringIdle: micActiveNow && isIdle,
       locationAppsWithPermission: locPerm,
       locationBgAppsCount: locBgPerm,
@@ -373,6 +451,7 @@ class FeatureCollector {
       nonPlayStoreAppCount: sideloadedApps,
       recentlyInstalledAppCount: recentInstalls,
       unknownInstallerAppCount: unknownInstaller,
+      flaggedAppCount: flaggedApps,
       appsTargetingOldSdkCount: oldSdkApps,
       appsWithAccessibilityCount: accessibilityActive ? 1 : 0,
       appsRunningInBgCount: bgProcesses,
@@ -383,6 +462,7 @@ class FeatureCollector {
       frequentInstallUninstallPattern: recentInstalls > 3,
       developerOptionsEnabled: devOptions,
       usbDebuggingEnabled: usbDebugging,
+      verifyAppsDisabled: verifyAppsDisabled,
       unknownSourcesEnabled: unknownSources,
       batteryOptDisabledAppsCount: batteryOptDisabled,
       cpuUsagePercent: cpuUsage,

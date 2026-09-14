@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:rat3/core/constants/app_constants.dart';
 import 'package:rat3/core/utils/app_utils.dart';
@@ -122,6 +123,9 @@ class ConnectionMonitor {
       c.remoteAddress.startsWith,
     );
     final untrustedOwner = untrustedPackages.contains(c.packageName);
+    final domain = c.queriedDomain;
+    final looksAlgorithmic =
+        domain != null && looksAlgorithmicallyGenerated(domain);
 
     if (c.isPersistent) {
       reasons.add(
@@ -138,6 +142,13 @@ class ConnectionMonitor {
     if (untrustedOwner) {
       reasons.add('"${c.appName}" has other unresolved security findings');
     }
+    if (looksAlgorithmic) {
+      reasons.add(
+        'Queried domain "$domain" has unusual, algorithmically-generated-looking '
+        'characteristics (a DNS-based C2 pattern) — though random-looking '
+        'subdomains also occur on legitimate CDN/cloud infrastructure',
+      );
+    }
 
     // Two or more correlated signals -> SUSPICIOUS. Exactly one -> just worth
     // a look. Zero -> normal, no matter how much data moved.
@@ -146,6 +157,7 @@ class ConnectionMonitor {
       portMatch,
       ipMatch,
       untrustedOwner,
+      looksAlgorithmic,
     ].where((b) => b).length;
 
     final assessment = switch (strongSignals) {
@@ -181,4 +193,47 @@ class ConnectionMonitor {
     _connectionsController.close();
     _alertController.close();
   }
+}
+
+/// A lightweight, conservative heuristic for domain-generation-algorithm-style
+/// hostnames (e.g. "xqzptmvwklrf.com") — one weak signal among several in
+/// [ConnectionMonitor._assess], exactly like a suspicious port or IP match. It
+/// never escalates a connection to SUSPICIOUS by itself, which matters here
+/// specifically: random-looking subdomains are also routine on legitimate
+/// CDN/cloud infrastructure (S3 buckets, Azure blob storage, Akamai edge
+/// nodes all do this), a well-known false-positive source for DGA heuristics
+/// in general — so this requires BOTH unusual length AND unusual character
+/// entropy (or a long consonant run) before it counts as a signal at all.
+bool looksAlgorithmicallyGenerated(String domain) {
+  final labels = domain.toLowerCase().split('.');
+  if (labels.length < 2) return false;
+  // The label right before the TLD is what DGA malware actually randomizes
+  // ("xqzptmvwklrf" in "xqzptmvwklrf.com"), not the full hostname.
+  final label = labels[labels.length - 2];
+  if (label.length < 12) return false;
+
+  final counts = <String, int>{};
+  for (final ch in label.split('')) {
+    counts[ch] = (counts[ch] ?? 0) + 1;
+  }
+  var entropy = 0.0;
+  for (final count in counts.values) {
+    final p = count / label.length;
+    entropy -= p * (log(p) / ln2);
+  }
+
+  const vowels = {'a', 'e', 'i', 'o', 'u'};
+  final letters = RegExp(r'^[a-z]$');
+  var longestConsonantRun = 0;
+  var run = 0;
+  for (final ch in label.split('')) {
+    if (letters.hasMatch(ch) && !vowels.contains(ch)) {
+      run++;
+      if (run > longestConsonantRun) longestConsonantRun = run;
+    } else {
+      run = 0;
+    }
+  }
+
+  return entropy > 3.3 || longestConsonantRun >= 6;
 }
